@@ -181,11 +181,19 @@ public class Lineage {
 		if(linItem == null)
 			return null;
 
-		return explain(linItem);
+		long t0 = System.nanoTime();
+		String retVal = explain(linItem);
+		long t1 = System.nanoTime();
+		System.out.println("\n" + "***** time for lin trace serialization: " + "<<2>>" + (((double) t1 - t0) / 1000000000) + "<</2>>" + "sec" + " for lin item " + linItem + "\n");
+		return retVal;
 	}
 
 	public static LineageItem deserializeSingleTrace(String serialLinTrace) {
-		return LineageParser.parseLineageTrace(serialLinTrace);
+		long t0 = System.nanoTime();
+		LineageItem retVal =  LineageParser.parseLineageTrace(serialLinTrace);
+		long t1 = System.nanoTime();
+		System.out.println("\n" + "***** time for lin trace deserialization: " + "<<3>>" + (((double) t1 - t0) / 1000000000) + "<</3>>" + "sec" + "\n");
+		return retVal;
 	}
 	
 	public static void resetInternalState() {
