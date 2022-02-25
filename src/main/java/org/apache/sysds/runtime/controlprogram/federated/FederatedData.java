@@ -196,7 +196,20 @@ public class FederatedData {
 			Promise<FederatedResponse> promise = f.channel().eventLoop().newPromise();
 
 			handler.setPromise(promise);
-			f.channel().writeAndFlush(request);
+			long t0 = System.nanoTime();
+			ChannelFuture tmpCF = f.channel().writeAndFlush(request);
+			try {
+				tmpCF.await();
+			} catch(InterruptedException ie) {
+				ie.printStackTrace();
+			}
+			long t1 = System.nanoTime();
+			boolean showSendTime = false;
+			for(FederatedRequest fr : request)
+				if(fr.getLineageTrace() != null)
+					showSendTime = true;
+			if(showSendTime)
+				System.out.println("\n" + "***** time of writeAndFlush request: " + "<<4>>" + (((double) t1 - t0) / 1000000000) + "<</4>>" + "sec" + "\n");
 			return promise;
 		}
 		catch(InterruptedException e) {
