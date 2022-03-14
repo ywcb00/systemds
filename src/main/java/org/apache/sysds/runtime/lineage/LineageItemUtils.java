@@ -76,6 +76,7 @@ import java.util.stream.Collectors;
 public class LineageItemUtils {
 	
 	public static final String LPLACEHOLDER = "IN#";
+	private static final String SERIALIZE_ITEM_OPCODE = "serialize";
 	
 	public static LineageItemType getType(String str) {
 		if (str.length() == 1) {
@@ -536,5 +537,9 @@ public class LineageItemUtils {
 				ec.traceLineage(VariableCPInstruction.prepMoveInstruction(fromVar, e.getKey()));
 			}
 		}
+	}
+
+	public static LineageItem getSerializedLineageItem(LineageItem li) {
+		return new LineageItem(SERIALIZE_ITEM_OPCODE, new LineageItem[]{li});
 	}
 }
