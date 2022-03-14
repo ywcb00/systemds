@@ -19,6 +19,7 @@
 
 package org.apache.sysds.runtime.controlprogram.federated;
 
+import java.io.Serializable;
 import java.security.cert.CertificateException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -27,7 +28,9 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
@@ -44,7 +47,11 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.log4j.Logger;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
+import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
+import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
+import org.apache.sysds.runtime.lineage.LineageItem;
 
 public class FederatedWorker {
 	protected static Logger log = Logger.getLogger(FederatedWorker.class);
@@ -91,7 +98,7 @@ public class FederatedWorker {
 						cp.addLast("ObjectDecoder",
 							new ObjectDecoder(Integer.MAX_VALUE,
 								ClassResolvers.weakCachingResolver(ClassLoader.getSystemClassLoader())));
-						cp.addLast("ObjectEncoder", new ObjectEncoder());
+						cp.addLast("ObjectEncoder", new CachedObjectEncoder());
 						cp.addLast("FederatedWorkerHandler", new FederatedWorkerHandler(_flt, _frc));
 					}
 				}).option(ChannelOption.SO_BACKLOG, 128).childOption(ChannelOption.SO_KEEPALIVE, true);
@@ -111,6 +118,43 @@ public class FederatedWorker {
 			log.info("Federated Worker Shutting down.");
 			workerGroup.shutdownGracefully();
 			bossGroup.shutdownGracefully();
+		}
+	}
+
+	private static class CachedObjectEncoder extends ObjectEncoder {
+
+		@Override
+		protected void encode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
+			LineageItem objLI = null;
+			boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
+			if(linReusePossible) {
+				FederatedResponse response = (FederatedResponse)msg;
+				if(response.getData() != null && response.getData().length != 0
+					&& response.getData()[0] instanceof CacheBlock) {
+					objLI = response.getLineageItem();
+
+					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
+					if(cachedBytes != null) {
+						out.writeBytes(cachedBytes);
+						return;
+					}
+				}
+			}
+
+			linReusePossible &= (objLI != null);
+
+			int startIdx = linReusePossible ? out.writerIndex() : 0;
+			long t0 = linReusePossible ? System.nanoTime() : 0;
+			super.encode(ctx, msg, out);
+			long t1 = linReusePossible ? System.nanoTime() : 0;
+
+			if(linReusePossible) {
+				out.readerIndex(startIdx);
+				byte[] dst = new byte[out.readableBytes()];
+				out.readBytes(dst);
+				LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
+				out.resetReaderIndex();
+			}
 		}
 	}
 }
