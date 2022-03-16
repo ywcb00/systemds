@@ -402,6 +402,8 @@ public class LineageCache
 		if (ReuseCacheType.isNone() || objLI == null)
 			return null;
 
+		long t0 = System.nanoTime();
+
 		LineageItem li = LineageItemUtils.getSerializedLineageItem(objLI);
 
 		LineageCacheEntry e = null;
@@ -419,6 +421,9 @@ public class LineageCache
 			byte[] sBytes = e.getSerializedBytes(); // waiting if the value is not set yet
 			if (sBytes == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
 				return null;  // the executing thread removed this entry from cache
+
+			long t1 = System.nanoTime();
+			System.out.println("***** serialization reuse check: <<6>>" + ((double)(t1 - t0) / 1000000000) + "<</6>>secs for objLI: " + objLI);
 
 			if (DMLScript.STATISTICS) { // increment statistics
 				LineageCacheStatistics.incrementSavedComputeTime(e._computeTime);

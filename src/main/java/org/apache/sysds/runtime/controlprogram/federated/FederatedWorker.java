@@ -135,6 +135,9 @@ public class FederatedWorker {
 
 					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
 					if(cachedBytes != null) {
+						if(objLI != null) {
+						  System.out.println("***** encoding bytes: <<5>>" + cachedBytes.length + "<</5>>bytes reused for response with li: " + response.getLineageItem());
+						}
 						out.writeBytes(cachedBytes);
 						return;
 					}
@@ -147,6 +150,11 @@ public class FederatedWorker {
 			long t0 = linReusePossible ? System.nanoTime() : 0;
 			super.encode(ctx, msg, out);
 			long t1 = linReusePossible ? System.nanoTime() : 0;
+
+			if(linReusePossible) { // only for experiment statistics
+			  FederatedResponse response = (FederatedResponse)msg;
+		    System.out.println("***** encoding time: <<1>>" + ((double)(t1 - t0) / 1000000000) + "<</1>>secs for result with li: " + response.getLineageItem());
+			}
 
 			if(linReusePossible) {
 				out.readerIndex(startIdx);
