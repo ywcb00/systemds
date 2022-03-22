@@ -60,6 +60,7 @@ public class FederatedLookupTable {
 		LOG.trace("Getting the ExecutionContextMap for coordinator " + pid + "@" + host);
 		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		FedUniqueCoordID funCID = new FedUniqueCoordID(host, pid);
+		System.out.println("FederatedLookupTable.java:60 - getting ecm for funCID " + funCID);
 		ExecutionContextMap ecm = _lookup_table.computeIfAbsent(funCID,
 			k -> createNewECM());
 		if(ecm == null) {
