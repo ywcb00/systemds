@@ -2173,6 +2173,8 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	public void write(DataOutput out) 
 		throws IOException 
 	{
+		long t0 = System.nanoTime();
+
 		//determine format
 		boolean sparseSrc = sparse;
 		boolean sparseDst = evalSparseFormatOnDisk();
@@ -2181,6 +2183,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		out.writeInt(rlen);
 		out.writeInt(clen);
 		
+		System.out.println("MatrixBlock.java:2186 - sparseSrc: " + sparseSrc + " | sparseDst: " + sparseDst + " | out class: " + out.getClass());
 		if( sparseSrc )
 		{
 			//write sparse to *
@@ -2205,6 +2208,9 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 			else
 				writeDenseBlock(out);
 		}
+
+		long t1 = System.nanoTime();
+		System.out.println("***** <<7>>" + ((double)(t1 - t0) / 1000000000) + "<</7>>secs for writing the MatrixBlock");
 	}
 
 	private static void writeEmptyBlock(DataOutput out) 
@@ -2220,19 +2226,27 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		out.writeByte( BlockType.DENSE_BLOCK.ordinal() );
 		
 		DenseBlock a = getDenseBlock();
+		long t0, t1;
 		if( out instanceof MatrixBlockDataOutput ) { //fast serialize
+			System.out.println("MatrixBlock.java:2230 - writing the dense block in the fast case | out of type " + out.getClass().getSimpleName());
+			t0 = System.nanoTime();
 			MatrixBlockDataOutput mout = (MatrixBlockDataOutput)out;
 			for(int i=0; i<a.numBlocks(); i++)
 				mout.writeDoubleArray(a.size(i), a.valuesAt(i));
+			t1 = System.nanoTime();
 		}
 		else { //general case (if fast serialize not supported)
+			System.out.println("MatrixBlock.java:2236 - writing the dense block in the general case (fast serialize not supported)");
+			t0 = System.nanoTime();
 			for(int i=0; i<a.numBlocks(); i++) {
 				double[] avals = a.values(i);
 				int limit = a.size(i);
 				for(int j=0; j<limit; j++)
 					out.writeDouble(avals[j]);
 			}
+			t1 = System.nanoTime();
 		}
+		System.out.println("MatrixBlock.java:2247 - time for writing: " + ((double)(t1 - t0) / 1000000000) + "secs");
 	}
 
 	private void writeSparseBlock(DataOutput out) 
@@ -2494,6 +2508,12 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		//note: in case of a CorrMatrixBlock being wrapped around a matrix
 		//block, the object output is already a FastBufferedDataOutputStream;
 		//so in general we try to avoid unnecessary buffer allocations here.
+
+		try {
+			throw new DMLRuntimeException("Temporary dml runtime exception");
+		} catch(DMLRuntimeException dre) {
+			dre.printStackTrace();
+		}
 		
 		if( os instanceof ObjectOutputStream && !isEmptyBlock(false)
 			&& !(os instanceof MatrixBlockDataOutput) ) {
@@ -2588,6 +2608,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	public static long estimateSizeDenseInMemory(long nrows, long ncols) {
 		double size = getHeaderSize()
 			+ DenseBlockFactory.estimateSizeDenseInMemory(nrows, ncols);
+		System.out.println("MatrixBlock.java:2611 - estimated size for nrows " + nrows + " ncols " + ncols + " is " + size);
 		// robustness for long overflows
 		return (long) Math.min(size, Long.MAX_VALUE);
 	}

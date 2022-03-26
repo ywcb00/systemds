@@ -19,6 +19,7 @@
 
 package org.apache.sysds.runtime.controlprogram.federated;
 
+import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.security.cert.CertificateException;
 import java.util.concurrent.SynchronousQueue;
@@ -29,11 +30,13 @@ import javax.net.ssl.SSLException;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufOutputStream;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
+import io.netty.channel.ChannelPromise;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -122,9 +125,29 @@ public class FederatedWorker {
 	}
 
 	private static class CachedObjectEncoder extends ObjectEncoder {
+		@Override
+		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg,
+			boolean preferDirect) throws Exception {
+			int initCapacity = 256;
+			try {
+				if(msg instanceof FederatedResponse) {
+					FederatedResponse fr = (FederatedResponse)msg;
+					if(fr.getData() != null && fr.getData().length > 0
+						&& fr.getData()[0] instanceof CacheBlock)
+						initCapacity = Math.toIntExact(((CacheBlock)fr.getData()[0]).getInMemorySize());
+				}
+			} catch(ArithmeticException ae) { // in memory size of cache block overflows integer limits
+				initCapacity = Integer.MAX_VALUE;
+			}
+			if(preferDirect)
+				return ctx.alloc().ioBuffer(initCapacity);
+			else
+				return ctx.alloc().heapBuffer(initCapacity);
+		}
 
 		@Override
 		protected void encode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
+			System.out.println("FederatedWorker.java:128 - inside the encode method");
 			LineageItem objLI = null;
 			boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
 			if(linReusePossible) {
@@ -143,10 +166,20 @@ public class FederatedWorker {
 
 			linReusePossible &= (objLI != null);
 
+			System.out.println("FederatedWorker.java:147 - ByteBuf class: " + out.getClass().getName() + "\n" + "ctx class: " + ctx.getClass().getName());
+			System.out.println("FederatedWorker.java:156 - bytebuf capacity: " + out.capacity());
+			System.out.println("FederatedWorker.java:157 - bytebuf max capacity: " + out.maxCapacity());
+
 			int startIdx = linReusePossible ? out.writerIndex() : 0;
 			long t0 = linReusePossible ? System.nanoTime() : 0;
 			super.encode(ctx, msg, out);
+			// internalEncode(ctx, msg, out);
 			long t1 = linReusePossible ? System.nanoTime() : 0;
+
+			if(linReusePossible) {
+				FederatedResponse response = (FederatedResponse)msg;
+				System.out.println("***** <<1>>" + ((double)(t1 - t0) / 1000000000) + "<</1>>secs for result with li: " + response.getLineageItem());
+			}
 
 			if(linReusePossible) {
 				out.readerIndex(startIdx);
@@ -155,6 +188,30 @@ public class FederatedWorker {
 				LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
 				out.resetReaderIndex();
 			}
+			System.out.println("FederatedWorker.java:165 - leaving the encode method");
 		}
+
+		// private void internalEncode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
+		// 	int startIdx = out.writerIndex();
+		// 
+		// 	ByteBufOutputStream bout = new ByteBufOutputStream(out);
+		// 	ObjectOutputStream oout = null;
+		// 	try {
+		// 			bout.write(LENGTH_PLACEHOLDER);
+		// 			oout = new ObjectOutputStream(bout);
+		// 			oout.writeObject(msg);
+		// 			oout.flush();
+		// 	} finally {
+		// 			if (oout != null) {
+		// 					oout.close();
+		// 			} else {
+		// 					bout.close();
+		// 			}
+		// 	}
+		// 
+		// 	int endIdx = out.writerIndex();
+		// 
+		// 	out.setInt(startIdx, endIdx - startIdx - 4);
+		// }
 	}
 }

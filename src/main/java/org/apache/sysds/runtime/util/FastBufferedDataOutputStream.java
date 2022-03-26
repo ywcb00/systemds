@@ -48,6 +48,7 @@ public class FastBufferedDataOutputStream extends FilterOutputStream implements 
 
 	public FastBufferedDataOutputStream(OutputStream out) {
 		this(out, 8192);
+		System.out.println("FastBufferedDataOutputStream.java:50 - out is of class: " + out.getClass());
 	}
 
 	public FastBufferedDataOutputStream(OutputStream out, int size) {
@@ -91,7 +92,11 @@ public class FastBufferedDataOutputStream extends FilterOutputStream implements 
 
 	private void flushBuffer() throws IOException {
 		if(_count > 0) {
+			long t0 = System.nanoTime();
 			out.write(_buff, 0, _count);
+			long t1 = System.nanoTime();
+			if((((double)t1 - t0) / 1000000000) > 0.001)
+				System.out.println("FastBufferedDataOutputStream.java:97 - time for writing output stream: " + (((double)t1 - t0) / 1000000000) + "secs " + " for out: " + out.getClass() + " with count " + _count);
 			_count = 0;
 		}
 	}
@@ -216,20 +221,34 @@ public class FastBufferedDataOutputStream extends FilterOutputStream implements 
 		//write matrix block-wise to underlying stream
 		//(increase i in awareness of len to prevent int overflow)
 		int blen = _bufflen/8;
+		long time1 = 0;
+		long time2 = 0;
+
+		System.out.println("FastBufferedDataOutputStream:225 - write double array with len " + len  + " and varr: " + varr + " in steps of " + Math.min(len, blen));
+
 		for( int i=0; i<len; i+=Math.min(len-i, blen) )
 		{
 			//write values of current block
 			int lblen = Math.min(len-i, blen);
+			long t0 = System.nanoTime();
 			for( int j=0; j<lblen; j++ )
 			{
 				long tmp = Double.doubleToRawLongBits(varr[i+j]);
 				longToBa(tmp, _buff, _count);
 				_count += 8;
 			}	
+			long t1 = System.nanoTime();
+			time1 += (t1 - t0);
 			
 			//flush buffer for current block
+			long t2 = System.nanoTime();
 			flushBuffer(); //based on count
+			long t3 = System.nanoTime();
+			if((((double)t3 - t2) / 1000000000) > 0.001)
+				System.out.println("FastBufferedDataOutputStream.java:242 - time for call to flushBuffer: " + ((double)(t3 - t2) / 1000000000) + "secs" + " | iterator: " + i + "\n");
+			time2 += (t3 - t2);
 		}
+		System.out.println("FastDataOutputStream.java:240 - doubleToRawLongBits and longToBa time: " + ((double)(time1) / 1000000000) + "secs | flushBuffer time: " + ((double)(time2) / 1000000000) + "secs");
 	}
 
 	@Override
