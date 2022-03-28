@@ -22,6 +22,9 @@ package org.apache.sysds.utils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.List;
@@ -58,6 +61,7 @@ import org.apache.sysds.runtime.controlprogram.ProgramBlock;
 import org.apache.sysds.runtime.controlprogram.WhileProgramBlock;
 import org.apache.sysds.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.cp.CPInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
@@ -68,6 +72,7 @@ import org.apache.sysds.runtime.instructions.spark.ReblockSPInstruction;
 import org.apache.sysds.runtime.instructions.spark.SPInstruction;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
+import org.apache.sysds.runtime.util.CommonThreadPool;
 
 public class Explain
 {
@@ -355,16 +360,25 @@ public class Explain
 	}
 
 	public static String explain( LineageItem li ) {
-		li.resetVisitStatusNR();
 		String s = explain(li, 0);
 		//s += rExplainDedupItems(li, new ArrayList<>());
-		li.resetVisitStatusNR();
 		return s;
 	}
 
 	private static String explain( LineageItem li, int level ) {
 		li.resetVisitStatusNR();
 		String ret = explainLineageItemNR(li, level);
+		li.resetVisitStatusNR();
+		return ret;
+	}
+
+	public static String explainMultiThreaded( LineageItem li) {
+		return explainMultiThreaded(li, 0);
+	}
+
+	private static String explainMultiThreaded( LineageItem li, int level ) {
+		li.resetVisitStatusNR();
+		String ret = explainLineageItemNRMultiThreaded(li, level);
 		li.resetVisitStatusNR();
 		return ret;
 	}
@@ -642,7 +656,93 @@ public class Explain
 		}
 		return sb.toString();
 	}
-	
+
+	private static String explainLineageItemNRMultiThreaded(LineageItem item, int level) {
+		int maxThreads = InfrastructureAnalyzer.getLocalParallelism();
+		CommonThreadPool pool = CommonThreadPool.get(maxThreads);
+		try {
+			return pool.submit(new MultiThreadedExplain(item, level, pool, maxThreads)).get();
+		} catch(InterruptedException | ExecutionException e) {
+			throw new DMLRuntimeException("Failed to explain the lineage trace multithreaded: " + e);
+		}
+	}
+
+	private static String explainLineageItemNRMultiThreaded(LineageItem item, int level,
+		CommonThreadPool pool, final int maxThreads) {
+		//NOTE: in contrast to similar non-recursive functions like resetVisitStatusNR,
+		// we maintain a more complex stack to ensure DFS ordering where current nodes
+		// are added after the subtree underneath is processed (backwards compatibility)
+		ArrayList<Future<String>> taskList = new ArrayList<>();
+
+		Stack<LineageItem> stackItem = new Stack<>();
+		Stack<MutableInt> stackPos = new Stack<>();
+		stackItem.push(item); stackPos.push(new MutableInt(0));
+		StringBuilder sb = new StringBuilder();
+		while( !stackItem.empty() ) {
+			LineageItem tmpItem = stackItem.peek();
+			MutableInt tmpPos = stackPos.peek();
+			//check ascent condition - no item processing
+			if( tmpItem.isVisited() ) {
+				stackItem.pop(); stackPos.pop();
+			}
+			//check ascent condition - append item
+			else if( tmpItem.getInputs() == null
+				|| tmpItem.getOpcode().startsWith(LineageItemUtils.LPLACEHOLDER)
+				// don't trace beyond if a placeholder is found
+				|| tmpItem.getInputs().length <= tmpPos.intValue() ) {
+				sb.append(createOffset(level));
+				sb.append(tmpItem.toString());
+				sb.append('\n');
+				stackItem.pop(); stackPos.pop();
+				tmpItem.setVisited();
+			}
+			//check descent condition
+			else if( tmpItem.getInputs() != null ) {
+				stackItem.push(tmpItem.getInputs()[tmpPos.intValue()]);
+				tmpPos.increment();
+				stackPos.push(new MutableInt(0));
+
+				while(maxThreads > pool.getActiveThreadCount()
+					&& tmpItem.getInputs().length > tmpPos.intValue()) {
+					taskList.add(pool.submit(new MultiThreadedExplain(tmpItem.getInputs()[tmpPos.intValue()], level, pool, maxThreads)));
+					tmpPos.increment();
+				}
+			}
+		}
+
+		try {
+			for(Future<String> task : taskList) {
+				sb.insert(0, task.get());
+			}
+		} catch(InterruptedException | ExecutionException e) {
+			throw new DMLRuntimeException("Failed to explain the lineage trace multithreaded: " + e);
+		}
+
+		return sb.toString();
+	}
+
+	public static class MultiThreadedExplain implements Callable<String> {
+		LineageItem _initItem;
+		int _level;
+		CommonThreadPool _pool;
+		int _maxThreads;
+
+		public MultiThreadedExplain(LineageItem initItem, int level, CommonThreadPool pool, int maxThreads) {
+			_initItem = initItem;
+			_level = level;
+			_pool = pool;
+			_maxThreads = maxThreads;
+		}
+
+		@Override
+		public String call() {
+			_initItem.resetVisitStatusNR();
+			String ret = explainLineageItemNRMultiThreaded(_initItem, _level, _pool, _maxThreads);
+			_initItem.resetVisitStatusNR();
+			return ret;
+		}
+	}
+
 	@Deprecated
 	@SuppressWarnings("unused")
 	private static String explainLineageItem(LineageItem li, int level) {

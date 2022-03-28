@@ -33,6 +33,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.apache.sysds.utils.Explain.explain;
+import static org.apache.sysds.utils.Explain.explainMultiThreaded;
 
 public class Lineage {
 	//thread-/function-local lineage DAG
@@ -181,7 +182,7 @@ public class Lineage {
 		if(linItem == null)
 			return null;
 
-		return explain(linItem);
+		return explainMultiThreaded(linItem);
 	}
 
 	public static LineageItem deserializeSingleTrace(String serialLinTrace) {

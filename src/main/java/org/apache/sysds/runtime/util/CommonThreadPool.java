@@ -55,7 +55,7 @@ public class CommonThreadPool implements ExecutorService
 		_pool = pool;
 	}
 
-	public static ExecutorService get(int k) {
+	public static CommonThreadPool get(int k) {
 		return new CommonThreadPool( (size==k) ?
 			shared : Executors.newFixedThreadPool(k));
 	}
@@ -85,6 +85,12 @@ public class CommonThreadPool implements ExecutorService
 			triggerRemoteOPsPool.shutdown();
 			triggerRemoteOPsPool = null;
 		}
+	}
+
+	public int getActiveThreadCount() {
+		if( _pool == shared )
+			return ((ForkJoinPool)_pool).getActiveThreadCount();
+		return Integer.MAX_VALUE;
 	}
 
 	@Override
