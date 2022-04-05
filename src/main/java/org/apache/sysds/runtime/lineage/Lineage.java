@@ -181,8 +181,11 @@ public class Lineage {
 	public static String serializeSingleTrace(LineageItem linItem) {
 		if(linItem == null)
 			return null;
-
-		return explainMultiThreaded(linItem);
+		long t0 = System.nanoTime();
+		String retVal = explainMultiThreaded(linItem);
+		long t1 = System.nanoTime();
+		System.out.println("\n" + "***** time for lin trace serialization: " + "<<2>>" + (((double) t1 - t0) / 1000000000) + "<</2>>" + "sec" + " for lin item: " + linItem + "\n");
+		return retVal;
 	}
 
 	public static LineageItem deserializeSingleTrace(String serialLinTrace) {

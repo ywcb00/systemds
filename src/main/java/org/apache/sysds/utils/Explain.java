@@ -704,6 +704,7 @@ public class Explain
 
 				while(maxThreads > pool.getActiveThreadCount()
 					&& tmpItem.getInputs().length > tmpPos.intValue()) {
+					System.out.println("Explain.java:707 - creating new explain thread (" + (pool.getActiveThreadCount() + 1) + "/" + maxThreads + ")");
 					taskList.add(pool.submit(new MultiThreadedExplain(tmpItem.getInputs()[tmpPos.intValue()], level, pool, maxThreads)));
 					tmpPos.increment();
 				}
