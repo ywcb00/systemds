@@ -129,16 +129,29 @@ public class FederatedWorker {
 
 	public static class FederatedResponseEncoder extends ObjectEncoder {
 		@Override
-		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg, boolean preferDirect)
-			throws Exception {
+		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg,
+			boolean preferDirect) throws Exception {
+
 			try {
 				if(msg instanceof FederatedResponse && ((FederatedResponse)msg).getData() != null && Arrays.stream(((FederatedResponse)msg).getData()).anyMatch(m -> m instanceof CacheBlock))
 					System.out.println("***** System time before allocating netty buffer: " + "<<16>>" + System.nanoTime() + "<</16>>");
 			} catch(Exception ex) {
 				System.out.println("Exception occurred in FederatedWorker::FederatedResponseEncoder::allocateBuffer()");
 			}
-			
-			return super.allocateBuffer(ctx, msg, preferDirect);
+
+			int initCapacity = 256; // default initial capacity
+			if(msg instanceof FederatedResponse) {
+				FederatedResponse response = (FederatedResponse)msg;
+				try {
+					initCapacity = Math.toIntExact(response.estimateSerializationBufferSize());
+				} catch(ArithmeticException ae) { // size of cache block exceeds integer limits
+					initCapacity = Integer.MAX_VALUE;
+				}
+			}
+			if(preferDirect)
+				return ctx.alloc().ioBuffer(initCapacity);
+			else
+				return ctx.alloc().heapBuffer(initCapacity);
 		}
 	}
 }

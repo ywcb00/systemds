@@ -299,16 +299,34 @@ public class FederatedData {
 
 	public static class FederatedRequestEncoder extends ObjectEncoder {
 		@Override
-		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg, boolean preferDirect)
-			throws Exception {
+		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg,
+			boolean preferDirect) throws Exception {
+
 			try {
 				if(msg instanceof FederatedRequest[] && Arrays.stream((FederatedRequest[])msg).anyMatch(req -> req instanceof FederatedRequest && ((FederatedRequest)req).getType() == RequestType.PUT_VAR && ((FederatedRequest)req).getParams().stream().anyMatch(o -> o instanceof CacheBlock)))
 					System.out.println("***** System time before allocating netty buffer: " + "<<16>>" + System.nanoTime() + "<</16>>");
 			} catch(Exception ex) {
 				System.out.println("Exception occurred in FederatedData::FederatedRequestEncoder::allocateBuffer()");
 			}
-			
-			return super.allocateBuffer(ctx, msg, preferDirect);
+
+			int initCapacity = 256; // default initial capacity
+			if(msg instanceof FederatedRequest[]) {
+				initCapacity = 0;
+				try {
+					for(FederatedRequest fr : (FederatedRequest[])msg) {
+						int frSize = Math.toIntExact(fr.estimateSerializationBufferSize());
+						if(Integer.MAX_VALUE - initCapacity < frSize) // summed sizes exceed integer limits
+							throw new ArithmeticException("Overflow.");
+						initCapacity += frSize;
+					}
+				} catch(ArithmeticException ae) { // size of federated request exceeds integer limits
+					initCapacity = Integer.MAX_VALUE;
+				}
+			}
+			if(preferDirect)
+				return ctx.alloc().ioBuffer(initCapacity);
+			else
+				return ctx.alloc().heapBuffer(initCapacity);
 		}
 	}
 }
