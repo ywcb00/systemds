@@ -615,32 +615,52 @@ public class Explain
 		Stack<MutableInt> stackPos = new Stack<>();
 		stackItem.push(item); stackPos.push(new MutableInt(0));
 		StringBuilder sb = new StringBuilder();
+		long popTime = 0;
+		long serialTime = 0;
+		long pushTime = 0;
 		while( !stackItem.empty() ) {
 			LineageItem tmpItem = stackItem.peek();
 			MutableInt tmpPos = stackPos.peek();
 			//check ascent condition - no item processing
 			if( tmpItem.isVisited() ) {
+				long t0 = System.nanoTime();
 				stackItem.pop(); stackPos.pop();
+				long t1 = System.nanoTime();
+				popTime += t1 - t0;
 			}
 			//check ascent condition - append item
 			else if( tmpItem.getInputs() == null 
 				|| tmpItem.getOpcode().startsWith(LineageItemUtils.LPLACEHOLDER)
 				// don't trace beyond if a placeholder is found
 				|| tmpItem.getInputs().length <= tmpPos.intValue() ) {
+				long t0 = System.nanoTime();
 				sb.append(createOffset(level));
 				sb.append(tmpItem.toString());
 				sb.append('\n');
 				stackItem.pop(); stackPos.pop();
 				tmpItem.setVisited();
+				long t1 = System.nanoTime();
+				serialTime += t1 - t0;
 			}
 			//check descent condition
 			else if( tmpItem.getInputs() != null ) {
+				long t0 = System.nanoTime();
 				stackItem.push(tmpItem.getInputs()[tmpPos.intValue()]);
 				tmpPos.increment();
 				stackPos.push(new MutableInt(0));
+				long t1 = System.nanoTime();
+				pushTime += t1 - t0;
 			}
 		}
-		return sb.toString();
+		long t0 = System.nanoTime();
+		String linTrace = sb.toString();
+		long t1 = System.nanoTime();
+		System.out.println("Explain.java:658 - times inside the explainLINR method:\n"
+			+ "\t" + "popTime:\t" + (((double)popTime) / 1000000000) + "\n"
+			+ "\t" + "serialTime:\t" + (((double)serialTime) / 1000000000) + "\n"
+			+ "\t" + "pushTime:\t" + (((double)pushTime) / 1000000000) + "\n"
+			+ "\t" + "toString:\t" + (((double)t1 - t0) / 1000000000) + "\n");
+		return linTrace;
 	}
 	
 	@Deprecated
