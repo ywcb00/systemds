@@ -19,14 +19,15 @@
 
 package org.apache.sysds.utils;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.List;
 import java.util.Map.Entry;
-import java.util.Stack;
 
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.sysds.hops.Hop;
@@ -611,14 +612,14 @@ public class Explain
 		//NOTE: in contrast to similar non-recursive functions like resetVisitStatusNR,
 		// we maintain a more complex stack to ensure DFS ordering where current nodes
 		// are added after the subtree underneath is processed (backwards compatibility)
-		Stack<LineageItem> stackItem = new Stack<>();
-		Stack<MutableInt> stackPos = new Stack<>();
+		Deque<LineageItem> stackItem = new ArrayDeque<>();
+		Deque<MutableInt> stackPos = new ArrayDeque<>();
 		stackItem.push(item); stackPos.push(new MutableInt(0));
 		StringBuilder sb = new StringBuilder();
 		long popTime = 0;
 		long serialTime = 0;
 		long pushTime = 0;
-		while( !stackItem.empty() ) {
+		while( !stackItem.isEmpty() ) {
 			LineageItem tmpItem = stackItem.peek();
 			MutableInt tmpPos = stackPos.peek();
 			//check ascent condition - no item processing

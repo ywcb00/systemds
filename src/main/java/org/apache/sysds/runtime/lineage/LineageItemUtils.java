@@ -71,7 +71,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.Stack;
-import java.util.stream.Collectors;
 
 public class LineageItemUtils {
 	
@@ -130,12 +129,10 @@ public class LineageItemUtils {
 				sb.append(li.getOpcode()).append(li.getData()).append(" ");
 			else
 				sb.append(li.getOpcode()).append(" ");
-			
-			String ids = Arrays.stream(li.getInputs())
-				.map(i -> String.format("(%d)", i.getId()))
-				.collect(Collectors.joining(" "));
-			sb.append(ids);
-			
+
+			Arrays.stream(li.getInputs())
+				.forEachOrdered(i -> sb.append("(").append(i.getId()).append(")").append(" "));
+
 			if (DMLScript.LINEAGE_DEBUGGER)
 				sb.append(" ").append("[").append(li.getSpecialValueBits()).append("]");
 		}
