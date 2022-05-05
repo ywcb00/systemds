@@ -109,6 +109,8 @@ public class LineageCache
 			else
 				liList = Arrays.asList(MutablePair.of(instLI, null));
 			
+			long t0 = System.nanoTime();
+
 			//atomic try reuse full/partial and set placeholder, without
 			//obtaining value to avoid blocking in critical section
 			LineageCacheEntry e = null;
@@ -141,7 +143,10 @@ public class LineageCache
 				}
 			}
 			reuse = reuseAll;
-			
+
+			long t1 = System.nanoTime();
+			System.out.println("***** time for lineage reuse check: " + (((double)t1 - t0) / 1000000000) + "secs");
+
 			if(reuse) { //reuse
 				boolean gpuReuse = false;
 				//put reuse value into symbol table (w/ blocking on placeholders)
@@ -207,6 +212,8 @@ public class LineageCache
 		if( !LineageCacheConfig.isMultiLevelReuse())
 			return false;
 		
+		long t0 = System.nanoTime();
+
 		boolean reuse = (outParams.size() != 0);
 		long savedComputeTime = 0;
 		HashMap<String, Data> funcOutputs = new HashMap<>();
@@ -263,6 +270,9 @@ public class LineageCache
 				reuse = false;
 			}
 		}
+
+		long t1 = System.nanoTime();
+		System.out.println("***** time for lineage reuse check: " + (((double)t1 - t0) / 1000000000) + "secs");
 		
 		if (reuse) {
 			funcOutputs.forEach((var, val) -> {
