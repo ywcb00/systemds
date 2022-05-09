@@ -41,6 +41,7 @@ import org.apache.sysds.runtime.lineage.LineageItem;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufOutputStream;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
@@ -141,6 +142,7 @@ public class FederatedWorker {
 		@Override
 		protected void encode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
 			LineageItem objLI = null;
+			long tReuseCheck0 = System.nanoTime();
 			boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
 			if(linReusePossible) {
 				FederatedResponse response = (FederatedResponse)msg;
@@ -151,10 +153,15 @@ public class FederatedWorker {
 					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
 					if(cachedBytes != null) {
 						out.writeBytes(cachedBytes);
+						long tReuseCheck1 = System.nanoTime();
+						System.out.println("***** reused serialization in: " + "<<6>>" + (((double)tReuseCheck1 - tReuseCheck0) / 1000000000) + "<</6>>" + "secs");
+						FederatedStatistics.tmpSummedSerializationReuseCheckTime.add(tReuseCheck1 - tReuseCheck0);
 						return;
 					}
 				}
 			}
+			long tReuseCheck1 = System.nanoTime();
+			FederatedStatistics.tmpSummedSerializationReuseCheckTime.add(tReuseCheck1 - tReuseCheck0);
 
 			linReusePossible &= (objLI != null);
 
@@ -162,13 +169,19 @@ public class FederatedWorker {
 			long t0 = linReusePossible ? System.nanoTime() : 0;
 			super.encode(ctx, msg, out);
 			long t1 = linReusePossible ? System.nanoTime() : 0;
+			if(((double)t1 - t0) > 10)
+				System.out.println("***** time for response encoding: " + "<<1>>" + (((double)t1 - t0) / 1000000000) + "<</1>>" + "secs");
 
 			if(linReusePossible) {
+				long tReuseWrite0 = System.nanoTime();
 				out.readerIndex(startIdx);
 				byte[] dst = new byte[out.readableBytes()];
 				out.readBytes(dst);
 				LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
 				out.resetReaderIndex();
+				long tReuseWrite1 = System.nanoTime();
+				System.out.println("***** time for obtaining and writing reusable bytes of response: " + "<<8>>" + (((double)tReuseWrite1 - tReuseWrite0) / 1000000000) + "<</8>>" + "secs");
+				System.out.println("***** bytes of response serialization written to lineage cache: " + "<<5>>" + (dst.length) + "<</5>>" + "bytes");
 			}
 		}
 	}

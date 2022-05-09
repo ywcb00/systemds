@@ -84,6 +84,8 @@ public class FederatedStatistics {
 	private static final LongAdder fedSerializationReuseCount = new LongAdder();
 	private static final LongAdder fedSerializationReuseBytes = new LongAdder();
 
+	public static final LongAdder tmpSummedSerializationReuseCheckTime = new LongAdder();
+
 	public static synchronized void incFederated(RequestType rqt, List<Object> data){
 		switch (rqt) {
 			case READ_VAR:
@@ -210,6 +212,9 @@ public class FederatedStatistics {
 
 	public static String displayFedWorkerStats() {
 		StringBuilder sb = new StringBuilder();
+		sb.append("***** summed time of reuse checks for serialization: " + "<<9>>"
+			+ (((double)tmpSummedSerializationReuseCheckTime.longValue()) / 1000000000)
+			+ "<</9>>" + "secs").append("\n");
 		sb.append(displayFedLookupTableStats());
 		sb.append(displayFedReuseReadStats());
 		sb.append(displayFedPutLineageStats());
