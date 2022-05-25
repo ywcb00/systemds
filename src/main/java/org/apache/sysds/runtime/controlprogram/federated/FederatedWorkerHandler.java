@@ -526,12 +526,12 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	private static void setThreads(Instruction ins){
 		final Operator op = ins.getOperator();
 		if(op instanceof MultiThreadedOperator) {
-			final int par_inst = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.FEDERATED_PAR_INST);
-			final int k = (par_inst > 0) ? par_inst : InfrastructureAnalyzer.getLocalParallelism();
+			// final int par_inst = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.FEDERATED_PAR_INST);
+			// final int k = (par_inst > 0) ? par_inst : InfrastructureAnalyzer.getLocalParallelism();
 
-			System.out.println("***** num threads set to " + "<<11>>" + k + "<</11>>" + " for operator " + op.getClass().getSimpleName());
+			System.out.println("***** num threads set to " + "<<11>>" + ((MultiThreadedOperator)op).getNumThreads() + "<</11>>" + " for operator " + op.getClass().getSimpleName());
 
-			((MultiThreadedOperator)op).setNumThreads(k);
+			// ((MultiThreadedOperator)op).setNumThreads(k);
 		}
 	}
 
