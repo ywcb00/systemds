@@ -25,13 +25,14 @@ import java.util.concurrent.Future;
 import org.apache.log4j.Logger;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
-import org.apache.sysds.runtime.controlprogram.parfor.util.IDHandler;
+// import org.apache.sysds.runtime.controlprogram.parfor.util.IDHandler;
 
 public class FederatedLocalData extends FederatedData {
 	protected final static Logger log = Logger.getLogger(FederatedWorkerHandler.class);
 
-	private static final FederatedLookupTable _flt = new FederatedLookupTable();
-	private static final FederatedReadCache _frc = new FederatedReadCache();
+	private static final ExecutionContextMap _ecm = new ExecutionContextMap();
+	// private static final FederatedLookupTable _flt = new FederatedLookupTable();
+	// private static final FederatedReadCache _frc = new FederatedReadCache();
 	private static final FederatedWorkloadAnalyzer _fan = initAnalyzer();
 	private final FederatedWorkerHandler _fwh;
 
@@ -39,11 +40,11 @@ public class FederatedLocalData extends FederatedData {
 
 	public FederatedLocalData(long id, CacheableData<?> data) {
 		super(data.getDataType(), null, data.getFileName());
-		_fwh = new FederatedWorkerHandler(_flt, _frc, _fan);
+		_fwh = new FederatedWorkerHandler(/*_flt, _frc,*/ _ecm, _fan);
 
 		_data = data;
-		long pid = Long.valueOf(IDHandler.obtainProcessID());
-		ExecutionContextMap ecm = _flt.getECM(FederatedLookupTable.NOHOST, pid);
+		// long pid = Long.valueOf(IDHandler.obtainProcessID());
+		ExecutionContextMap ecm = _ecm;
 		synchronized(ecm) {
 			ecm.get(-1).setVariable(Long.toString(id), _data);
 		}

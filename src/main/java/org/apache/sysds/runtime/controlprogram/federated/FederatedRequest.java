@@ -35,7 +35,7 @@ import org.apache.sysds.runtime.controlprogram.caching.CacheDataOutput;
 import org.apache.sysds.runtime.controlprogram.caching.LazyWriteBuffer;
 import org.apache.sysds.runtime.controlprogram.parfor.util.IDHandler;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
-import org.apache.sysds.runtime.lineage.Lineage;
+// import org.apache.sysds.runtime.lineage.Lineage;
 import org.apache.sysds.runtime.lineage.LineageItem;
 
 public class FederatedRequest implements Serializable {
@@ -59,7 +59,7 @@ public class FederatedRequest implements Serializable {
 	private boolean _checkPrivacy;
 	private List<Long> _checksums;
 	private long _pid;
-	private String _lineageTrace; // the serialized lineage trace of a put object
+	// private String _lineageTrace; // the serialized lineage trace of a put object
 
 	public FederatedRequest(RequestType method) {
 		this(method, FederationUtils.getNextFedDataID(), new ArrayList<>());
@@ -75,7 +75,7 @@ public class FederatedRequest implements Serializable {
 
 	public FederatedRequest(RequestType method, LineageItem linItem, long id, Object ... data) {
 		this(method, id, Arrays.asList(data));
-		_lineageTrace = (linItem != null) ? Lineage.serializeSingleTrace(linItem) : null;
+		// _lineageTrace = (linItem != null) ? Lineage.serializeSingleTrace(linItem) : null;
 	}
 
 	public FederatedRequest(RequestType method, long id, List<Object> data) {
@@ -191,9 +191,9 @@ public class FederatedRequest implements Serializable {
 		}
 	}
 
-	public String getLineageTrace() {
-		return _lineageTrace;
-	}
+	// public String getLineageTrace() {
+	// 	return _lineageTrace;
+	// }
 
 	public long estimateSerializationBufferSize() {
 		long minBufferSize = 512; // general offset for the FederatedRequest object
@@ -203,8 +203,8 @@ public class FederatedRequest implements Serializable {
 					minBufferSize += ((CacheBlock)obj).getExactSerializedSize();
 			}
 		}
-		if(_lineageTrace != null)
-			minBufferSize += _lineageTrace.length();
+		// if(_lineageTrace != null)
+		// 	minBufferSize += _lineageTrace.length();
 		return minBufferSize;
 	}
 

@@ -53,13 +53,13 @@ import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyze
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.Instruction.IType;
 import org.apache.sysds.runtime.instructions.InstructionParser;
-import org.apache.sysds.runtime.instructions.cp.CPOperand;
+// import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.io.FileFormatPropertiesCSV;
 import org.apache.sysds.runtime.io.IOUtilFunctions;
-import org.apache.sysds.runtime.lineage.Lineage;
+// import org.apache.sysds.runtime.lineage.Lineage;
 import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
@@ -86,11 +86,13 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	private static final Log LOG = LogFactory.getLog(FederatedWorkerHandler.class.getName());
 
+	private final ExecutionContextMap _ecm;
+
 	/** The Federated Lookup Table of the current Federated Worker. */
-	private final FederatedLookupTable _flt;
+	// private final FederatedLookupTable _flt;
 
 	/** Read cache shared by all worker handlers */
-	private final FederatedReadCache _frc;
+	// private final FederatedReadCache _frc;
 
 	/** Federated workload analyzer */
 	private final FederatedWorkloadAnalyzer _fan;
@@ -105,9 +107,10 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	 * @param frc Read cache shared by all worker handlers.
 	 * @param fan A Workload analyzer object (should be null if not used).
 	 */
-	public FederatedWorkerHandler(FederatedLookupTable flt, FederatedReadCache frc, FederatedWorkloadAnalyzer fan) {
-		_flt = flt;
-		_frc = frc;
+	public FederatedWorkerHandler(/*FederatedLookupTable flt, FederatedReadCache frc,*/ ExecutionContextMap ecm, FederatedWorkloadAnalyzer fan) {
+		// _flt = flt;
+		// _frc = frc;
+		_ecm = ecm;
 		_fan = fan;
 	}
 
@@ -168,7 +171,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		for(int i = 0; i < requests.length; i++) {
 			final FederatedRequest request = requests[i];
 			final RequestType t = request.getType();
-			final ExecutionContextMap ecm = _flt.getECM(remoteHost, request.getPID());
+			final ExecutionContextMap ecm = _ecm;
 			logRequests(request, i, requests.length);
 
 			PrivacyMonitor.setCheckPrivacy(request.checkPrivacy());
@@ -271,30 +274,33 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		CacheableData<?> cd = null;
 		final String sId = String.valueOf(id);
 
-		boolean linReuse = (!ReuseCacheType.isNone() && dataType == DataType.MATRIX);
-		if(!linReuse || !LineageCache.reuseFedRead(sId, dataType, linItem, ec)) {
-			// Lookup read cache if reuse is disabled and we skipped storing in the
-			// lineage cache due to other constraints
-			cd = _frc.get(filename, !linReuse);
-			try {
-				if(cd == null) { // data is neither in lineage cache nor in read cache
-					cd = readDataNoReuse(filename, dataType, mc); // actual read of the data
-					if(linReuse) // put the object into the lineage cache
-						LineageCache.putFedReadObject(cd, linItem, ec);
-					else
-						_frc.setData(filename, cd); // set the data into the read cache entry
-				}
-				ec.setVariable(sId, cd);
+		// boolean linReuse = (!ReuseCacheType.isNone() && dataType == DataType.MATRIX);
+		// if(!linReuse || !LineageCache.reuseFedRead(sId, dataType, linItem, ec)) {
+		// 	// Lookup read cache if reuse is disabled and we skipped storing in the
+		// 	// lineage cache due to other constraints
+		// 	cd = _frc.get(filename, !linReuse);
+		// 	try {
+		// 		if(cd == null) { // data is neither in lineage cache nor in read cache
+		// 			cd = readDataNoReuse(filename, dataType, mc); // actual read of the data
+		// 			if(linReuse) // put the object into the lineage cache
+		// 				LineageCache.putFedReadObject(cd, linItem, ec);
+		// 			else
+		// 				_frc.setData(filename, cd); // set the data into the read cache entry
+		// 		}
+		// 		ec.setVariable(sId, cd);
+		// 
+		// 	} catch(Exception ex) {
+		// 		if(linReuse)
+		// 			LineageCache.putFedReadObject(null, linItem, ec); // removing the placeholder
+		// 		else
+		// 			_frc.setInvalid(filename);
+		// 		throw ex;
+		// 	}
+		// }
 
-			} catch(Exception ex) {
-				if(linReuse)
-					LineageCache.putFedReadObject(null, linItem, ec); // removing the placeholder
-				else
-					_frc.setInvalid(filename);
-				throw ex;
-			}
-		}
-		
+		cd = readDataNoReuse(filename, dataType, mc); // actual read of the data
+		ec.setVariable(sId, cd);
+
 		if(shouldTryAsyncCompress()) // TODO: replace the reused object
 			CompressedMatrixBlockFactory.compressAsync(ec, sId);
 
@@ -413,14 +419,14 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			CompressedMatrixBlockFactory.compressAsync(ec, varName);
 
 		if(DMLScript.LINEAGE) {
-			if(request.getParam(0) instanceof CacheBlock && request.getLineageTrace() != null) {
+			/*if(request.getParam(0) instanceof CacheBlock && request.getLineageTrace() != null) {
 				ec.getLineage().set(varName, Lineage.deserializeSingleTrace(request.getLineageTrace()));
 				if(DMLScript.STATISTICS)
 					FederatedStatistics.aggFedPutLineage(request.getLineageTrace());
 			}
 			else if(request.getParam(0) instanceof ScalarObject)
 				ec.getLineage().set(varName, new LineageItem(CPOperand.getLineageLiteral((ScalarObject)request.getParam(0), true)));
-			else if(request.getNumParams()==1) // don't trace if the data contains only metadata
+			else*/ if(request.getNumParams()==1) // don't trace if the data contains only metadata
 				ec.getLineage().set(varName, new LineageItem(String.valueOf(request.getChecksum(0))));
 		}
 

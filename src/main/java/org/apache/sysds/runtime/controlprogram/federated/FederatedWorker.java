@@ -32,12 +32,12 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.runtime.DMLRuntimeException;
-import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
+// import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
 import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
-import org.apache.sysds.runtime.lineage.LineageCache;
+// import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
-import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
-import org.apache.sysds.runtime.lineage.LineageItem;
+// import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
+// import org.apache.sysds.runtime.lineage.LineageItem;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
@@ -58,14 +58,16 @@ public class FederatedWorker {
 	protected static Logger log = Logger.getLogger(FederatedWorker.class);
 
 	private final int _port;
-	private final FederatedLookupTable _flt;
-	private final FederatedReadCache _frc;
+	// private final FederatedLookupTable _flt;
+	// private final FederatedReadCache _frc;
+	private final ExecutionContextMap _ecm;
 	private final FederatedWorkloadAnalyzer _fan;
 	private final boolean _debug;
 
 	public FederatedWorker(int port, boolean debug) {
-		_flt = new FederatedLookupTable();
-		_frc = new FederatedReadCache();
+		// _flt = new FederatedLookupTable();
+		// _frc = new FederatedReadCache();
+		_ecm = new ExecutionContextMap();
 		if(ConfigurationManager.getCompressConfig().isWorkload())
 			_fan = new FederatedWorkloadAnalyzer();
 		else
@@ -138,39 +140,39 @@ public class FederatedWorker {
 				return ctx.alloc().heapBuffer(initCapacity);
 		}
 
-		@Override
-		protected void encode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
-			LineageItem objLI = null;
-			boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
-			if(linReusePossible) {
-				FederatedResponse response = (FederatedResponse)msg;
-				if(response.getData() != null && response.getData().length != 0
-					&& response.getData()[0] instanceof CacheBlock) {
-					objLI = response.getLineageItem();
-
-					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
-					if(cachedBytes != null) {
-						out.writeBytes(cachedBytes);
-						return;
-					}
-				}
-			}
-
-			linReusePossible &= (objLI != null);
-
-			int startIdx = linReusePossible ? out.writerIndex() : 0;
-			long t0 = linReusePossible ? System.nanoTime() : 0;
-			super.encode(ctx, msg, out);
-			long t1 = linReusePossible ? System.nanoTime() : 0;
-
-			if(linReusePossible) {
-				out.readerIndex(startIdx);
-				byte[] dst = new byte[out.readableBytes()];
-				out.readBytes(dst);
-				LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
-				out.resetReaderIndex();
-			}
-		}
+	// 	@Override
+	// 	protected void encode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
+	// 		LineageItem objLI = null;
+	// 		boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
+	// 		if(linReusePossible) {
+	// 			FederatedResponse response = (FederatedResponse)msg;
+	// 			if(response.getData() != null && response.getData().length != 0
+	// 				&& response.getData()[0] instanceof CacheBlock) {
+	// 				objLI = response.getLineageItem();
+	// 
+	// 				byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
+	// 				if(cachedBytes != null) {
+	// 					out.writeBytes(cachedBytes);
+	// 					return;
+	// 				}
+	// 			}
+	// 		}
+	// 
+	// 		linReusePossible &= (objLI != null);
+	// 
+	// 		int startIdx = linReusePossible ? out.writerIndex() : 0;
+	// 		long t0 = linReusePossible ? System.nanoTime() : 0;
+	// 		super.encode(ctx, msg, out);
+	// 		long t1 = linReusePossible ? System.nanoTime() : 0;
+	// 
+	// 		if(linReusePossible) {
+	// 			out.readerIndex(startIdx);
+	// 			byte[] dst = new byte[out.readableBytes()];
+	// 			out.readBytes(dst);
+	// 			LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
+	// 			out.resetReaderIndex();
+	// 		}
+	// 	}
 	}
 
 	private ChannelInitializer<SocketChannel> createChannel(boolean ssl) {
@@ -186,7 +188,7 @@ public class FederatedWorker {
 					if(ssl)
 						cp.addLast(cont2.newHandler(ch.alloc()));
 					cp.addLast(FederationUtils.decoder(), new FederatedResponseEncoder());
-					cp.addLast(new FederatedWorkerHandler(_flt, _frc, _fan));
+					cp.addLast(new FederatedWorkerHandler(/*_flt, _frc,*/ _ecm, _fan));
 				}
 			};
 		}
