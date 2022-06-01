@@ -393,6 +393,8 @@ public class LineageCache
 				LineageCacheStatistics.incrementSavedComputeTime(e._computeTime);
 			}
 
+			System.out.println("***** got object from lineage read cache with saved compute time of " + "<<13>>" + (((double)e._computeTime) / 1000000000) + "<</13>>" + "secs");
+
 			return true;
 		}
 		return false;
