@@ -302,6 +302,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 
 	private FederatedResponse readData(String filename, DataType dataType,
 		long id, long tid, ExecutionContextMap ecm, CacheBlock localBlock) {
+		long t0 = System.nanoTime();
 		MatrixCharacteristics mc = new MatrixCharacteristics();
 		mc.setBlocksize(ConfigurationManager.getBlocksize());
 
@@ -345,15 +346,21 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			// create a literal type lineage item with the file name
 			ec.getLineage().set(sId, linItem);
 
+		FederatedResponse response = null;
+
 		if(dataType == Types.DataType.FRAME) { // frame read
 			FrameObject frameObject = (FrameObject) cd;
 			frameObject.acquireRead();
 			frameObject.refreshMetaData(); // get block schema
 			frameObject.release();
-			return new FederatedResponse(ResponseType.SUCCESS, new Object[] {id, frameObject.getSchema(), mc});
+			response = new FederatedResponse(ResponseType.SUCCESS, new Object[] {id, frameObject.getSchema(), mc});
 		}
 		else // matrix read
-			return new FederatedResponse(ResponseType.SUCCESS, new Object[] {id, mc});
+			response = new FederatedResponse(ResponseType.SUCCESS, new Object[] {id, mc});
+
+		long t1 = System.nanoTime();
+		System.out.println("***** time for read request: " + "<<12>>" + (((double)t1 - t0) / 1000000000) + "<</12>>" + "secs");
+		return response;
 	}
 
 	private CacheableData<?> readDataNoReuse(String filename, DataType dataType,
