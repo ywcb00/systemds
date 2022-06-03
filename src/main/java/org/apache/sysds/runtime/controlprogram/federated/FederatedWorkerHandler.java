@@ -360,6 +360,12 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 
 		long t1 = System.nanoTime();
 		System.out.println("***** time for read request: " + "<<12>>" + (((double)t1 - t0) / 1000000000) + "<</12>>" + "secs");
+		if(!linReuse) {
+			t0 = System.nanoTime();
+			cd.acquireRead();
+			t1 = System.nanoTime();
+			System.out.println("***** time for the actual read of the data: " + "<<13>>" + (((double)t1 - t0) / 1000000000) + "<</13>>" + "secs");
+		}
 		return response;
 	}
 
