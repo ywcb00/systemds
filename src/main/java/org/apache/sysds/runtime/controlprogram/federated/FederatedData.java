@@ -19,8 +19,10 @@
 
 package org.apache.sysds.runtime.controlprogram.federated;
 
+import java.io.Serializable;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -33,11 +35,13 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
-import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.meta.MetaData;
 
 import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -184,7 +188,7 @@ public class FederatedData {
 					cp.addLast("ObjectDecoder", new ObjectDecoder(Integer.MAX_VALUE,
 						ClassResolvers.weakCachingResolver(ClassLoader.getSystemClassLoader())));
 					cp.addLast("FederatedOperationHandler", handler);
-					cp.addLast("ObjectEncoder", new ObjectEncoder());
+					cp.addLast("FederatedRequestEncoder", new FederatedRequestEncoder());
 				}
 			});
 
@@ -250,6 +254,14 @@ public class FederatedData {
 		public void channelRead(ChannelHandlerContext ctx, Object msg) {
 			if(_prom == null)
 				throw new DMLRuntimeException("Read while no message was sent");
+
+				try {
+					if(msg instanceof FederatedResponse && ((FederatedResponse)msg).getData() != null && Arrays.stream(((FederatedResponse)msg).getData()).anyMatch(m -> m instanceof CacheBlock))
+						System.out.println("***** System time when getting the response: " + "<<17>>" + System.nanoTime() + "<</17>>");
+				} catch(Exception ex) {
+					System.out.println("Exception occurred in FederatedWorker::FederatedResponseEncoder::allocateBuffer()");
+				}
+
 			_prom.setSuccess((FederatedResponse) msg);
 			ctx.close();
 		}
@@ -283,5 +295,20 @@ public class FederatedData {
 		sb.append(" " + _address.toString());
 		sb.append(":" + _filepath);
 		return sb.toString();
+	}
+
+	public static class FederatedRequestEncoder extends ObjectEncoder {
+		@Override
+		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg, boolean preferDirect)
+			throws Exception {
+			try {
+				if(msg instanceof FederatedRequest[] && Arrays.stream((FederatedRequest[])msg).anyMatch(req -> req instanceof FederatedRequest && ((FederatedRequest)req).getType() == RequestType.PUT_VAR && ((FederatedRequest)req).getParams().stream().anyMatch(o -> o instanceof CacheBlock)))
+					System.out.println("***** System time before allocating netty buffer: " + "<<16>>" + System.nanoTime() + "<</16>>");
+			} catch(Exception ex) {
+				System.out.println("Exception occurred in FederatedData::FederatedRequestEncoder::allocateBuffer()");
+			}
+			
+			return super.allocateBuffer(ctx, msg, preferDirect);
+		}
 	}
 }

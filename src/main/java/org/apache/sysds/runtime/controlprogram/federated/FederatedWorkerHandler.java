@@ -113,6 +113,13 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 
 	@Override
 	public void channelRead(ChannelHandlerContext ctx, Object msg) {
+		try {
+			if(msg instanceof FederatedRequest[] && Arrays.stream((FederatedRequest[])msg).anyMatch(req -> req instanceof FederatedRequest && ((FederatedRequest)req).getType() == RequestType.PUT_VAR && ((FederatedRequest)req).getParams().stream().anyMatch(o -> o instanceof CacheBlock)))
+				System.out.println("***** System time when getting the requests: " + "<<17>>" + System.nanoTime() + "<</17>>");
+		} catch(Exception ex) {
+			System.out.println("Exception occurred in FederatedData::FederatedRequestEncoder::allocateBuffer()");
+		}
+
 		ctx.writeAndFlush(createResponse(msg, ctx.channel().remoteAddress()))
 			.addListener(new CloseListener());
 	}

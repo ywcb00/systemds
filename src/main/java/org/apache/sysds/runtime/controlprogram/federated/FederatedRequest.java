@@ -108,6 +108,10 @@ public class FederatedRequest implements Serializable {
 		return _pid;
 	}
 
+	public List<Object> getParams() {
+		return _data;
+	}
+
 	public Object getParam(int i) {
 		return _data.get(i);
 	}
