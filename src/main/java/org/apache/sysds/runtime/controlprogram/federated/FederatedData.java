@@ -22,6 +22,7 @@ package org.apache.sysds.runtime.controlprogram.federated;
 import java.io.Serializable;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -191,6 +192,10 @@ public class FederatedData {
 			ChannelFuture f = b.connect(address).sync();
 			Promise<FederatedResponse> promise = f.channel().eventLoop().newPromise();
 			handler.setPromise(promise);
+
+			if(Arrays.stream(request).anyMatch(fr -> fr.getType() == RequestType.PUT_VAR))
+				System.out.println("***** System time when sending put var request: " + "<<18>>" + System.nanoTime() + "<</18>>");
+
 			f.channel().writeAndFlush(request);
 
 			return handler.getProm();
