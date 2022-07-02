@@ -166,6 +166,10 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			return new FederatedResponse(ResponseType.ERROR,
 				new FederatedWorkerHandlerException("Received object of wrong instance 'FederatedRequest[]'."));
 		final FederatedRequest[] requests = (FederatedRequest[]) msg;
+
+		if(Arrays.stream(requests).anyMatch(fr -> fr.getType() == RequestType.PUT_VAR))
+			System.out.println("***** System time when receiving put var request: " + "<<19>>" + System.nanoTime() + "<</19>>");
+
 		try {
 			return createResponse(requests, remoteHost);
 		}
