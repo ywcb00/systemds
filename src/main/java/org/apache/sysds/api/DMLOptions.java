@@ -130,42 +130,43 @@ public class DMLOptions {
 
 		DMLOptions dmlOptions = new DMLOptions(options);
 		dmlOptions.help = line.hasOption("help");
-		if (line.hasOption("lineage")){
-			dmlOptions.lineage = true;
-			String lineageTypes[] = line.getOptionValues("lineage");
-			if (lineageTypes != null) {
-				for (String lineageType : lineageTypes) {
-					if (lineageType != null){
-						if (lineageType.equalsIgnoreCase("dedup"))
-							dmlOptions.lineage_dedup = lineageType.equalsIgnoreCase("dedup");
-						else if (lineageType.equalsIgnoreCase("reuse_full")
-							|| lineageType.equalsIgnoreCase("reuse"))
-							dmlOptions.linReuseType = ReuseCacheType.REUSE_FULL;
-						else if (lineageType.equalsIgnoreCase("reuse_partial"))
-							dmlOptions.linReuseType = ReuseCacheType.REUSE_PARTIAL;
-						else if (lineageType.equalsIgnoreCase("reuse_multilevel"))
-							dmlOptions.linReuseType = ReuseCacheType.REUSE_MULTILEVEL;
-						else if (lineageType.equalsIgnoreCase("reuse_hybrid"))
-							dmlOptions.linReuseType = ReuseCacheType.REUSE_HYBRID;
-						else if (lineageType.equalsIgnoreCase("none"))
-							dmlOptions.linReuseType = ReuseCacheType.NONE;
-						else if (lineageType.equalsIgnoreCase("policy_lru"))
-							dmlOptions.linCachePolicy = LineageCachePolicy.LRU;
-						else if (lineageType.equalsIgnoreCase("policy_costnsize"))
-							dmlOptions.linCachePolicy = LineageCachePolicy.COSTNSIZE;
-						else if (lineageType.equalsIgnoreCase("policy_dagheight"))
-							dmlOptions.linCachePolicy = LineageCachePolicy.DAGHEIGHT;
-						else if (lineageType.equalsIgnoreCase("estimate"))
-							dmlOptions.lineage_estimate = lineageType.equalsIgnoreCase("estimate");
-						else if (lineageType.equalsIgnoreCase("debugger"))
-							dmlOptions.lineage_debugger = lineageType.equalsIgnoreCase("debugger");							
-						else
-							throw new org.apache.commons.cli.ParseException(
-								"Invalid argument specified for -lineage option: " + lineageType);
-					}
-				}
-			}
-		}
+		dmlOptions.lineage = false;
+		// if (line.hasOption("lineage")){
+		// 	dmlOptions.lineage = true;
+		// 	String lineageTypes[] = line.getOptionValues("lineage");
+		// 	if (lineageTypes != null) {
+		// 		for (String lineageType : lineageTypes) {
+		// 			if (lineageType != null){
+		// 				if (lineageType.equalsIgnoreCase("dedup"))
+		// 					dmlOptions.lineage_dedup = lineageType.equalsIgnoreCase("dedup");
+		// 				else if (lineageType.equalsIgnoreCase("reuse_full")
+		// 					|| lineageType.equalsIgnoreCase("reuse"))
+		// 					dmlOptions.linReuseType = ReuseCacheType.REUSE_FULL;
+		// 				else if (lineageType.equalsIgnoreCase("reuse_partial"))
+		// 					dmlOptions.linReuseType = ReuseCacheType.REUSE_PARTIAL;
+		// 				else if (lineageType.equalsIgnoreCase("reuse_multilevel"))
+		// 					dmlOptions.linReuseType = ReuseCacheType.REUSE_MULTILEVEL;
+		// 				else if (lineageType.equalsIgnoreCase("reuse_hybrid"))
+		// 					dmlOptions.linReuseType = ReuseCacheType.REUSE_HYBRID;
+		// 				else if (lineageType.equalsIgnoreCase("none"))
+		// 					dmlOptions.linReuseType = ReuseCacheType.NONE;
+		// 				else if (lineageType.equalsIgnoreCase("policy_lru"))
+		// 					dmlOptions.linCachePolicy = LineageCachePolicy.LRU;
+		// 				else if (lineageType.equalsIgnoreCase("policy_costnsize"))
+		// 					dmlOptions.linCachePolicy = LineageCachePolicy.COSTNSIZE;
+		// 				else if (lineageType.equalsIgnoreCase("policy_dagheight"))
+		// 					dmlOptions.linCachePolicy = LineageCachePolicy.DAGHEIGHT;
+		// 				else if (lineageType.equalsIgnoreCase("estimate"))
+		// 					dmlOptions.lineage_estimate = lineageType.equalsIgnoreCase("estimate");
+		// 				else if (lineageType.equalsIgnoreCase("debugger"))
+		// 					dmlOptions.lineage_debugger = lineageType.equalsIgnoreCase("debugger");							
+		// 				else
+		// 					throw new org.apache.commons.cli.ParseException(
+		// 						"Invalid argument specified for -lineage option: " + lineageType);
+		// 			}
+		// 		}
+		// 	}
+		// }
 		dmlOptions.debug = line.hasOption("debug");
 		dmlOptions.gpu = line.hasOption("gpu");
 		if (dmlOptions.gpu) {
