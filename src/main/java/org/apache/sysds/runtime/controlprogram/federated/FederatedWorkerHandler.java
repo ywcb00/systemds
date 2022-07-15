@@ -609,6 +609,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			LOG.error(msg, ex);
 			throw new FederatedWorkerHandlerException(msg);
 		}
+		LineageCache.printReuseTimes();
 		return new FederatedResponse(ResponseType.SUCCESS_EMPTY);
 	}
 

@@ -53,6 +53,7 @@ import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.meta.MetaDataFormat;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -63,6 +64,40 @@ public class LineageCache
 {
 	private static final Map<LineageItem, LineageCacheEntry> _cache = new HashMap<>();
 	protected static final boolean DEBUG = false;
+
+	private static AtomicLong reuseSavedTime = new AtomicLong();
+	private static AtomicLong reuseCheckTime = new AtomicLong();
+	private static AtomicLong reusePutTime = new AtomicLong();
+
+	public static void printReuseTimes() {
+		printReuseSavedTime();
+		printReuseCheckTime();
+		printReusePutTime();
+	}
+
+	public static void printReuseSavedTime() {
+		System.out.println("***** saved compute time from lineage reuse instruction: " + "<<20>>" + ((double)reuseSavedTime.getAndSet(0) / 1000000000) + "<</20>>" + "secs");
+	}
+
+	public static void incrementReuseSavedTime(long inc) {
+		reuseSavedTime.addAndGet(inc);
+	}
+
+	public static void printReuseCheckTime() {
+		System.out.println("***** time for reuse check: " + "<<21>>" + (((double)reuseCheckTime.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	public static void incrementReuseCheckTime(long inc) {
+		reuseCheckTime.addAndGet(inc);
+	}
+
+	public static void printReusePutTime() {
+		System.out.println("***** time for putting the instruction output to lineage cache: " + "<<22>>" + (((double)reusePutTime.getAndSet(0)) / 1000000000) + "<</22>>" + "secs");
+	}
+
+	public static void incrementReusePutTime(long inc) {
+		reusePutTime.addAndGet(inc);
+	}
 
 	static {
 		LineageCacheEviction.setCacheLimit(LineageCacheConfig.CPU_CACHE_FRAC); //5%
@@ -85,6 +120,8 @@ public class LineageCache
 	public static boolean reuse(Instruction inst, ExecutionContext ec) {
 		if (ReuseCacheType.isNone())
 			return false;
+
+		long t0 = System.nanoTime();
 		
 		boolean reuse = false;
 		//NOTE: the check for computation CP instructions ensures that the output
@@ -160,15 +197,21 @@ public class LineageCache
 					
 					if (e.isMatrixValue() && e._gpuObject == null) {
 						MatrixBlock mb = e.getMBValue(); //wait if another thread is executing the same inst.
-						if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+						if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+							long t1 = System.nanoTime();
+							incrementReuseCheckTime(t1 - t0);
 							return false;  //the executing thread removed this entry from cache
+						}
 						else
 							ec.setMatrixOutput(outName, mb);
 					}
 					else if (e.isScalarValue()) {
 						ScalarObject so = e.getSOValue(); //wait if another thread is executing the same inst.
-						if (so == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+						if (so == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+							long t1 = System.nanoTime();
+							incrementReuseCheckTime(t1 - t0);
 							return false;  //the executing thread removed this entry from cache
+						}
 						else
 							ec.setScalarOutput(outName, so);
 					}
@@ -185,6 +228,8 @@ public class LineageCache
 
 					if (DMLScript.STATISTICS) //increment saved time
 						LineageCacheStatistics.incrementSavedComputeTime(e._computeTime);
+
+					incrementReuseSavedTime(e._computeTime);
 				}
 				if (DMLScript.STATISTICS) {
 					if (gpuReuse)
@@ -195,6 +240,8 @@ public class LineageCache
 			}
 		}
 		
+		long t1 = System.nanoTime();
+		incrementReuseCheckTime(t1 - t0);
 		return reuse;
 	}
 	
@@ -480,6 +527,7 @@ public class LineageCache
 	//NOTE: safe to pin the object in memory as coming from CPInstruction
 	//TODO why do we need both of these public put methods
 	public static void putMatrix(Instruction inst, ExecutionContext ec, long computetime) {
+		long t0 = System.nanoTime();
 		if (LineageCacheConfig.isReusable(inst, ec) ) {
 			LineageItem item = ((LineageTraceable) inst).getLineageItem(ec).getValue();
 			//This method is called only to put matrix value
@@ -490,9 +538,12 @@ public class LineageCache
 				putIntern(item, DataType.MATRIX, mo.acquireReadAndRelease(), null, computetime);
 			}
 		}
+		long t1 = System.nanoTime();
+		incrementReusePutTime(t1 - t0);
 	}
 	
 	public static void putValue(Instruction inst, ExecutionContext ec, long starttime) {
+		long t0 = System.nanoTime();
 		if (DMLScript.LINEAGE_ESTIMATE)
 			//forward to estimator
 			LineageEstimator.processSingleInst(inst, ec, starttime);
@@ -536,6 +587,9 @@ public class LineageCache
 			else
 				putValueGPU(liGpuObj, instLI, computetime);
 		}
+
+		long t1 = System.nanoTime();
+		incrementReusePutTime(t1 - t0);
 	}
 	
 	private static void putValueCPU(Instruction inst, List<Pair<LineageItem, Data>> liData, long computetime)
