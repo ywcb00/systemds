@@ -146,6 +146,9 @@ public class FederatedWorker {
 		@Override
 		protected void encode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
 			LineageItem objLI = null;
+
+			long t0Check = System.nanoTime();
+
 			boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
 			if(linReusePossible) {
 				FederatedResponse response = (FederatedResponse)msg;
@@ -156,8 +159,12 @@ public class FederatedWorker {
 					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
 					if(cachedBytes != null) {
 						out.writeBytes(cachedBytes);
+						long t1Check = System.nanoTime();
+						System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
 						return;
 					}
+					long t1Check = System.nanoTime();
+					System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
 				}
 			}
 
