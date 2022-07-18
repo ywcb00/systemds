@@ -32,13 +32,13 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.runtime.DMLRuntimeException;
-import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
+// import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
 import org.apache.sysds.runtime.controlprogram.paramserv.NetworkTrafficCounter;
 import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
-import org.apache.sysds.runtime.lineage.LineageCache;
+// import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
-import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
-import org.apache.sysds.runtime.lineage.LineageItem;
+// import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
+// import org.apache.sysds.runtime.lineage.LineageItem;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
@@ -145,36 +145,36 @@ public class FederatedWorker {
 
 		@Override
 		protected void encode(ChannelHandlerContext ctx, Serializable msg, ByteBuf out) throws Exception {
-			LineageItem objLI = null;
-			boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
-			if(linReusePossible) {
-				FederatedResponse response = (FederatedResponse)msg;
-				if(response.getData() != null && response.getData().length != 0
-					&& response.getData()[0] instanceof CacheBlock) {
-					objLI = response.getLineageItem();
+			// LineageItem objLI = null;
+			// boolean linReusePossible = (!ReuseCacheType.isNone() && msg instanceof FederatedResponse);
+			// if(linReusePossible) {
+			// 	FederatedResponse response = (FederatedResponse)msg;
+			// 	if(response.getData() != null && response.getData().length != 0
+			// 		&& response.getData()[0] instanceof CacheBlock) {
+			// 		objLI = response.getLineageItem();
+			//
+			// 		byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
+			// 		if(cachedBytes != null) {
+			// 			out.writeBytes(cachedBytes);
+			// 			return;
+			// 		}
+			// 	}
+			// }
+			//
+			// linReusePossible &= (objLI != null);
 
-					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
-					if(cachedBytes != null) {
-						out.writeBytes(cachedBytes);
-						return;
-					}
-				}
-			}
-
-			linReusePossible &= (objLI != null);
-
-			int startIdx = linReusePossible ? out.writerIndex() : 0;
-			long t0 = linReusePossible ? System.nanoTime() : 0;
+			// int startIdx = linReusePossible ? out.writerIndex() : 0;
+			// long t0 = linReusePossible ? System.nanoTime() : 0;
 			super.encode(ctx, msg, out);
-			long t1 = linReusePossible ? System.nanoTime() : 0;
-
-			if(linReusePossible) {
-				out.readerIndex(startIdx);
-				byte[] dst = new byte[out.readableBytes()];
-				out.readBytes(dst);
-				LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
-				out.resetReaderIndex();
-			}
+		// 	long t1 = linReusePossible ? System.nanoTime() : 0;
+		//
+		// 	if(linReusePossible) {
+		// 		out.readerIndex(startIdx);
+		// 		byte[] dst = new byte[out.readableBytes()];
+		// 		out.readBytes(dst);
+		// 		LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
+		// 		out.resetReaderIndex();
+		// 	}
 		}
 	}
 
