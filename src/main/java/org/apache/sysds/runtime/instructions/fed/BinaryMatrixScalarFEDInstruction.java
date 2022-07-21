@@ -35,6 +35,8 @@ public class BinaryMatrixScalarFEDInstruction extends BinaryFEDInstruction
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
+		System.out.println("***** Started BinaryMatrixScalarFEDInstruction at " + "<<26>>" + System.nanoTime() + "<</26>>" + "ns");
+
 		CPOperand matrix = input1.isMatrix() ? input1 : input2;
 		CPOperand scalar = input2.isScalar() ? input2 : input1;
 		MatrixObject mo = ec.getMatrixObject(matrix);
@@ -58,5 +60,7 @@ public class BinaryMatrixScalarFEDInstruction extends BinaryFEDInstruction
 		MatrixObject out = ec.getMatrixObject(output);
 		out.getDataCharacteristics().set(mo.getDataCharacteristics());
 		out.setFedMapping(mo.getFedMapping().copyWithNewID(fr2.getID()));
+
+		System.out.println("***** Finished BinaryMatrixScalarFEDInstruction at " + "<<27>>" + System.nanoTime() + "<</27>>" + "ns");
 	}
 }
