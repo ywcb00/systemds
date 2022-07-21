@@ -296,7 +296,7 @@ public class FederatedStatistics {
 		sb.append(displayMultiTenantStats(fedStats.mtStats));
 		sb.append(displayCPUUsage());
 		sb.append(displayMemoryUsage());
-		sb.append(displayFedTransfer());
+		// sb.append(displayFedTransfer());
 		sb.append(displayHeavyHitters(fedStats.heavyHitters, numHeavyHitters));
 		sb.append(displayNetworkTrafficStatistics());
 		return sb.toString();
@@ -345,17 +345,17 @@ public class FederatedStatistics {
 		return displayHeavyHitters(heavyHitters, 10);
 	}
 
-	private static String displayFedTransfer() {
-		StringBuilder sb = new StringBuilder();
-		sb.append("Transferred bytes (Host/Datetime/ByteAmount):\n");
-
-		for (var entry: coordinatorsTrafficBytes) {
-			sb.append(String.format("%s/%s/%d.\n",
-					entry.getLeft().format(DateTimeFormatter.ISO_DATE_TIME), entry.getMiddle(), entry.getRight()));
-		}
-
-		return sb.toString();
-	}
+	// private static String displayFedTransfer() {
+	// 	StringBuilder sb = new StringBuilder();
+	// 	sb.append("Transferred bytes (Host/Datetime/ByteAmount):\n");
+	// 
+	// 	for (var entry: coordinatorsTrafficBytes) {
+	// 		sb.append(String.format("%s/%s/%d.\n",
+	// 				entry.getLeft().format(DateTimeFormatter.ISO_DATE_TIME), entry.getMiddle(), entry.getRight()));
+	// 	}
+	// 
+	// 	return sb.toString();
+	// }
 
 	private static String displayCPUUsage() {
 		StringBuilder sb = new StringBuilder();
