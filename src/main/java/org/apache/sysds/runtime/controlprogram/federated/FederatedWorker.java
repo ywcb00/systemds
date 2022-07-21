@@ -68,9 +68,12 @@ public class FederatedWorker {
 	private final boolean _debug;
 	private Timing networkTimer = new Timing();
 
+	public static FederatedReadCache _newestFRC;
+
 	public FederatedWorker(int port, boolean debug) {
 		_flt = new FederatedLookupTable();
 		_frc = new FederatedReadCache();
+		_newestFRC = _frc;
 		if(ConfigurationManager.getCompressConfig().isWorkload())
 			_fan = new FederatedWorkloadAnalyzer();
 		else

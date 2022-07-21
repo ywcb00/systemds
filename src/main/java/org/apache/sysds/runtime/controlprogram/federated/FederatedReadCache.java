@@ -48,6 +48,10 @@ public class FederatedReadCache {
 		return (tmp != null) ? tmp.get() : null;
 	}
 
+	public void clear() { // only for experiments
+		_rmap.clear();
+	}
+
 	/**
 	 * Set the data for the ReadCacheEntry with specified filename.
 	 *
