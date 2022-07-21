@@ -29,6 +29,8 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedWorker;
+import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -103,6 +105,13 @@ public final class MatrixIndexingCPInstruction extends IndexingCPInstruction {
 				if(!ixrange.isScalar())
 					throw new DMLRuntimeException("Invalid index range of scalar leftindexing: "+ixrange.toString()+"." );
 				ScalarObject scalar = ec.getScalarInput(input2.getName(), ValueType.FP64, input2.isLiteral());
+
+				if(scalar.getLongValue() == 123456) { // "cheat" for experiments to clear cache of the workers and to call the garbage collector
+					FederatedWorker._newestFRC.clear();
+					LineageCache.resetCache();
+					System.gc();
+				}
+
 				resultBlock = matBlock.leftIndexingOperations(scalar, 
 					(int)ixrange.rowStart, (int)ixrange.colStart, new MatrixBlock(), updateType);
 			}
