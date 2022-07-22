@@ -71,8 +71,6 @@ public class FederatedWorker {
 	public static FederatedReadCache _newestFRC;
 	public static boolean _clearWorker;
 
-	public static FederatedReadCache _newestFRC;
-
 	public FederatedWorker(int port, boolean debug) {
 		_flt = new FederatedLookupTable();
 		_frc = new FederatedReadCache();
