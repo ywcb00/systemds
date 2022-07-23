@@ -121,7 +121,7 @@ public class LineageCache
 		if (ReuseCacheType.isNone())
 			return false;
 
-		long t0 = System.nanoTime();
+		long t0Check = System.nanoTime();
 		
 		boolean reuse = false;
 		//NOTE: the check for computation CP instructions ensures that the output
@@ -178,8 +178,15 @@ public class LineageCache
 				}
 			}
 			reuse = reuseAll;
-			
+
+			long t1Check = System.nanoTime();
+			incrementReuseCheckTime(t1Check - t0Check);
+
 			if(reuse) { //reuse
+
+				long t0Reuse = System.nanoTime();
+				long t1Reuse = t0Reuse;
+
 				boolean gpuReuse = false;
 				//put reuse value into symbol table (w/ blocking on placeholders)
 				for (MutablePair<LineageItem, LineageCacheEntry> entry : liList) {
@@ -196,20 +203,26 @@ public class LineageCache
 						outName = gpuinst._output.getName();
 					
 					if (e.isMatrixValue() && e._gpuObject == null) {
+						t1Reuse = System.nanoTime();
+						incrementReuseCheckTime(t1Reuse - t0Reuse);
 						MatrixBlock mb = e.getMBValue(); //wait if another thread is executing the same inst.
+						t0Reuse = System.nanoTime();
 						if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
-							long t1 = System.nanoTime();
-							incrementReuseCheckTime(t1 - t0);
+							t1Reuse = System.nanoTime();
+							incrementReuseCheckTime(t1Reuse - t0Reuse);
 							return false;  //the executing thread removed this entry from cache
 						}
 						else
 							ec.setMatrixOutput(outName, mb);
 					}
 					else if (e.isScalarValue()) {
+						t1Reuse = System.nanoTime();
+						incrementReuseCheckTime(t1Reuse - t0Reuse);
 						ScalarObject so = e.getSOValue(); //wait if another thread is executing the same inst.
+						t0Reuse = System.nanoTime();
 						if (so == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
-							long t1 = System.nanoTime();
-							incrementReuseCheckTime(t1 - t0);
+							t1Reuse = System.nanoTime();
+							incrementReuseCheckTime(t1Reuse - t0Reuse);
 							return false;  //the executing thread removed this entry from cache
 						}
 						else
@@ -229,6 +242,9 @@ public class LineageCache
 					if (DMLScript.STATISTICS) //increment saved time
 						LineageCacheStatistics.incrementSavedComputeTime(e._computeTime);
 
+					t1Reuse = System.nanoTime();
+					incrementReuseCheckTime(t1Reuse - t0Reuse);
+					t0Reuse = System.nanoTime();
 					incrementReuseSavedTime(e._computeTime);
 				}
 				if (DMLScript.STATISTICS) {
@@ -240,8 +256,6 @@ public class LineageCache
 			}
 		}
 		
-		long t1 = System.nanoTime();
-		incrementReuseCheckTime(t1 - t0);
 		return reuse;
 	}
 	
