@@ -69,6 +69,7 @@ public class FederatedWorker {
 	private Timing networkTimer = new Timing();
 
 	public static FederatedReadCache _newestFRC;
+	public static boolean _clearWorker;
 
 	public FederatedWorker(int port, boolean debug) {
 		_flt = new FederatedLookupTable();
