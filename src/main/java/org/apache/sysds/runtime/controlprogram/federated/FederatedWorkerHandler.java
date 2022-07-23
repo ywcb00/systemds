@@ -602,6 +602,14 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	}
 
 	private FederatedResponse execClear(ExecutionContextMap ecm) {
+
+		if(FederatedWorker._clearWorker) {
+			FederatedWorker._newestFRC.clear();
+			LineageCache.resetCache();
+			System.gc();
+			FederatedWorker._clearWorker = false;
+		}
+
 		try {
 			ecm.clear();
 		}
