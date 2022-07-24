@@ -67,11 +67,13 @@ public class LineageCache
 
 	private static AtomicLong reuseSavedTime = new AtomicLong();
 	private static AtomicLong reuseCheckTime = new AtomicLong();
+	private static AtomicLong reuseReuseTime = new AtomicLong();
 	private static AtomicLong reusePutTime = new AtomicLong();
 
 	public static void printReuseTimes() {
 		printReuseSavedTime();
 		printReuseCheckTime();
+		printReuseReuseTime();
 		printReusePutTime();
 	}
 
@@ -89,6 +91,14 @@ public class LineageCache
 
 	public static void incrementReuseCheckTime(long inc) {
 		reuseCheckTime.addAndGet(inc);
+	}
+
+	public static void printReuseReuseTime() {
+		System.out.println("***** time for reuse itself: " + "<<21>>" + (((double)reuseReuseTime.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	public static void incrementReuseReuseTime(long inc) {
+		reuseReuseTime.addAndGet(inc);
 	}
 
 	public static void printReusePutTime() {
@@ -204,12 +214,12 @@ public class LineageCache
 					
 					if (e.isMatrixValue() && e._gpuObject == null) {
 						t1Reuse = System.nanoTime();
-						incrementReuseCheckTime(t1Reuse - t0Reuse);
+						incrementReuseReuseTime(t1Reuse - t0Reuse);
 						MatrixBlock mb = e.getMBValue(); //wait if another thread is executing the same inst.
 						t0Reuse = System.nanoTime();
 						if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
 							t1Reuse = System.nanoTime();
-							incrementReuseCheckTime(t1Reuse - t0Reuse);
+							incrementReuseReuseTime(t1Reuse - t0Reuse);
 							return false;  //the executing thread removed this entry from cache
 						}
 						else
@@ -217,12 +227,12 @@ public class LineageCache
 					}
 					else if (e.isScalarValue()) {
 						t1Reuse = System.nanoTime();
-						incrementReuseCheckTime(t1Reuse - t0Reuse);
+						incrementReuseReuseTime(t1Reuse - t0Reuse);
 						ScalarObject so = e.getSOValue(); //wait if another thread is executing the same inst.
 						t0Reuse = System.nanoTime();
 						if (so == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
 							t1Reuse = System.nanoTime();
-							incrementReuseCheckTime(t1Reuse - t0Reuse);
+							incrementReuseReuseTime(t1Reuse - t0Reuse);
 							return false;  //the executing thread removed this entry from cache
 						}
 						else
