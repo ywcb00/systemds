@@ -402,6 +402,8 @@ public class LineageCache
 		if (ReuseCacheType.isNone() || objLI == null)
 			return null;
 
+		long t0Check = System.nanoTime();
+
 		LineageItem li = LineageItemUtils.getSerializedFedResponseLineageItem(objLI);
 
 		LineageCacheEntry e = null;
@@ -416,6 +418,10 @@ public class LineageCache
 		}
 
 		if(e != null && e.isSerializedBytes()) {
+
+			long t1Check = System.nanoTime();
+			System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
+
 			byte[] sBytes = e.getSerializedBytes(); // waiting if the value is not set yet
 			if (sBytes == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
 				return null;  // the executing thread removed this entry from cache

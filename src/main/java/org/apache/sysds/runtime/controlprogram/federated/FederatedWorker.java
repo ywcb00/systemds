@@ -160,15 +160,17 @@ public class FederatedWorker {
 					&& response.getData()[0] instanceof CacheBlock) {
 					objLI = response.getLineageItem();
 
+					long t1Check = System.nanoTime();
+					System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
+
 					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
+					t0Check = System.nanoTime();
 					if(cachedBytes != null) {
 						out.writeBytes(cachedBytes);
-						long t1Check = System.nanoTime();
+						t1Check = System.nanoTime();
 						System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
 						return;
 					}
-					long t1Check = System.nanoTime();
-					System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
 				}
 			}
 
