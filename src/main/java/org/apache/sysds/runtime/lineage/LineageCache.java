@@ -66,46 +66,86 @@ public class LineageCache
 	protected static final boolean DEBUG = false;
 
 	private static AtomicLong reuseSavedTime = new AtomicLong();
-	private static AtomicLong reuseCheckTime = new AtomicLong();
-	private static AtomicLong reuseReuseTime = new AtomicLong();
+	private static AtomicLong reuseCheckTime1 = new AtomicLong();
+	private static AtomicLong reuseCheckTime2 = new AtomicLong();
+	private static AtomicLong reuseCheckTime3 = new AtomicLong();
+	private static AtomicLong reuseReuseTime1 = new AtomicLong();
+	private static AtomicLong reuseReuseTime2 = new AtomicLong();
+	private static AtomicLong reuseReuseTime3 = new AtomicLong();
 	private static AtomicLong reusePutTime = new AtomicLong();
 
 	public static void printReuseTimes() {
 		printReuseSavedTime();
-		printReuseCheckTime();
-		printReuseReuseTime();
+		printReuseCheckTime1();
+		printReuseCheckTime2();
+		printReuseCheckTime3();
+		printReuseReuseTime1();
+		printReuseReuseTime2();
+		printReuseReuseTime3();
 		printReusePutTime();
 	}
 
-	public static void printReuseSavedTime() {
+	private static void printReuseSavedTime() {
 		System.out.println("***** saved compute time from lineage reuse instruction: " + "<<20>>" + ((double)reuseSavedTime.getAndSet(0) / 1000000000) + "<</20>>" + "secs");
 	}
 
-	public static void incrementReuseSavedTime(long inc) {
+	private static void incrementReuseSavedTime(long inc) {
 		reuseSavedTime.addAndGet(inc);
 	}
 
-	public static void printReuseCheckTime() {
-		System.out.println("***** time for reuse check: " + "<<21>>" + (((double)reuseCheckTime.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	private static void printReuseCheckTime1() {
+		System.out.println("***** time for reuse check 1: " + "<<21>>" + (((double)reuseCheckTime1.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
 	}
 
-	public static void incrementReuseCheckTime(long inc) {
-		reuseCheckTime.addAndGet(inc);
+	private static void incrementReuseCheckTime1(long inc) {
+		reuseCheckTime1.addAndGet(inc);
 	}
 
-	public static void printReuseReuseTime() {
-		System.out.println("***** time for reuse itself: " + "<<21>>" + (((double)reuseReuseTime.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	private static void printReuseCheckTime2() {
+		System.out.println("***** time for reuse check 2: " + "<<21>>" + (((double)reuseCheckTime2.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
 	}
 
-	public static void incrementReuseReuseTime(long inc) {
-		reuseReuseTime.addAndGet(inc);
+	private static void incrementReuseCheckTime2(long inc) {
+		reuseCheckTime2.addAndGet(inc);
 	}
 
-	public static void printReusePutTime() {
+	private static void printReuseCheckTime3() {
+		System.out.println("***** time for reuse check 3: " + "<<21>>" + (((double)reuseCheckTime3.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	private static void incrementReuseCheckTime3(long inc) {
+		reuseCheckTime3.addAndGet(inc);
+	}
+
+	private static void printReuseReuseTime1() {
+		System.out.println("***** time for reuse itself: " + "<<21>>" + (((double)reuseReuseTime1.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	private static void incrementReuseReuseTime1(long inc) {
+		reuseReuseTime1.addAndGet(inc);
+	}
+
+	private static void printReuseReuseTime2() {
+		System.out.println("***** time for reuse itself: " + "<<21>>" + (((double)reuseReuseTime2.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	private static void incrementReuseReuseTime2(long inc) {
+		reuseReuseTime2.addAndGet(inc);
+	}
+
+	private static void printReuseReuseTime3() {
+		System.out.println("***** time for reuse itself: " + "<<21>>" + (((double)reuseReuseTime3.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	private static void incrementReuseReuseTime3(long inc) {
+		reuseReuseTime3.addAndGet(inc);
+	}
+
+	private static void printReusePutTime() {
 		System.out.println("***** time for putting the instruction output to lineage cache: " + "<<22>>" + (((double)reusePutTime.getAndSet(0)) / 1000000000) + "<</22>>" + "secs");
 	}
 
-	public static void incrementReusePutTime(long inc) {
+	private static void incrementReusePutTime(long inc) {
 		reusePutTime.addAndGet(inc);
 	}
 
@@ -156,11 +196,20 @@ public class LineageCache
 			else
 				liList = Arrays.asList(MutablePair.of(instLI, null));
 			
+			long t1Check = System.nanoTime();
+			incrementReuseCheckTime1(t1Check - t0Check);
+			t0Check = System.nanoTime();
+
 			//atomic try reuse full/partial and set placeholder, without
 			//obtaining value to avoid blocking in critical section
 			LineageCacheEntry e = null;
 			boolean reuseAll = true;
 			synchronized( _cache ) {
+
+				t1Check = System.nanoTime();
+				incrementReuseCheckTime2(t1Check - t0Check);
+				t0Check = System.nanoTime();
+
 				//try to reuse full or partial intermediates
 				for (MutablePair<LineageItem,LineageCacheEntry> item : liList) {
 					if (LineageCacheConfig.getCacheType().isFullReuse())
@@ -189,8 +238,8 @@ public class LineageCache
 			}
 			reuse = reuseAll;
 
-			long t1Check = System.nanoTime();
-			incrementReuseCheckTime(t1Check - t0Check);
+			t1Check = System.nanoTime();
+			incrementReuseCheckTime3(t1Check - t0Check);
 
 			if(reuse) { //reuse
 
@@ -201,6 +250,11 @@ public class LineageCache
 				//put reuse value into symbol table (w/ blocking on placeholders)
 				for (MutablePair<LineageItem, LineageCacheEntry> entry : liList) {
 					e = entry.getValue();
+
+					t1Reuse = System.nanoTime();
+					incrementReuseReuseTime1(t1Reuse - t0Reuse);
+					t0Reuse = System.nanoTime();
+
 					String outName = null;
 					if (inst instanceof MultiReturnBuiltinCPInstruction)
 						outName = ((MultiReturnBuiltinCPInstruction)inst).
@@ -214,12 +268,12 @@ public class LineageCache
 					
 					if (e.isMatrixValue() && e._gpuObject == null) {
 						t1Reuse = System.nanoTime();
-						incrementReuseReuseTime(t1Reuse - t0Reuse);
+						incrementReuseReuseTime2(t1Reuse - t0Reuse);
 						MatrixBlock mb = e.getMBValue(); //wait if another thread is executing the same inst.
 						t0Reuse = System.nanoTime();
 						if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
 							t1Reuse = System.nanoTime();
-							incrementReuseReuseTime(t1Reuse - t0Reuse);
+							incrementReuseReuseTime2(t1Reuse - t0Reuse);
 							return false;  //the executing thread removed this entry from cache
 						}
 						else
@@ -227,12 +281,12 @@ public class LineageCache
 					}
 					else if (e.isScalarValue()) {
 						t1Reuse = System.nanoTime();
-						incrementReuseReuseTime(t1Reuse - t0Reuse);
+						incrementReuseReuseTime2(t1Reuse - t0Reuse);
 						ScalarObject so = e.getSOValue(); //wait if another thread is executing the same inst.
 						t0Reuse = System.nanoTime();
 						if (so == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
 							t1Reuse = System.nanoTime();
-							incrementReuseReuseTime(t1Reuse - t0Reuse);
+							incrementReuseReuseTime2(t1Reuse - t0Reuse);
 							return false;  //the executing thread removed this entry from cache
 						}
 						else
@@ -253,7 +307,7 @@ public class LineageCache
 						LineageCacheStatistics.incrementSavedComputeTime(e._computeTime);
 
 					t1Reuse = System.nanoTime();
-					incrementReuseCheckTime(t1Reuse - t0Reuse);
+					incrementReuseReuseTime3(t1Reuse - t0Reuse);
 					t0Reuse = System.nanoTime();
 					incrementReuseSavedTime(e._computeTime);
 				}
