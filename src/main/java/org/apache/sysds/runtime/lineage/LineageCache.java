@@ -71,6 +71,7 @@ public class LineageCache
 	private static AtomicLong reuseCheckTime3a = new AtomicLong();
 	private static AtomicLong reuseCheckTime3b = new AtomicLong();
 	private static AtomicLong reuseCheckTime3c = new AtomicLong();
+	private static AtomicLong reuseProbeTime = new AtomicLong();
 	private static AtomicLong reuseReuseTime1 = new AtomicLong();
 	private static AtomicLong reuseReuseTime2 = new AtomicLong();
 	private static AtomicLong reuseReuseTime3 = new AtomicLong();
@@ -83,6 +84,7 @@ public class LineageCache
 		printReuseCheckTime3a();
 		printReuseCheckTime3b();
 		printReuseCheckTime3c();
+		printReuseProbeTime();
 		printReuseReuseTime1();
 		printReuseReuseTime2();
 		printReuseReuseTime3();
@@ -135,6 +137,14 @@ public class LineageCache
 
 	private static void incrementReuseCheckTime3c(long inc) {
 		reuseCheckTime3c.addAndGet(inc);
+	}
+
+	private static void printReuseProbeTime() {
+		System.out.println("***** time for reuse probe: " + "<<21>>" + (((double)reuseProbeTime.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	private static void incrementReuseProbeTime(long inc) {
+		reuseProbeTime.addAndGet(inc);
 	}
 
 	private static void printReuseReuseTime1() {
@@ -586,7 +596,10 @@ public class LineageCache
 
 	public static boolean probe(LineageItem key) {
 		//TODO problematic as after probe the matrix might be kicked out of cache
+		long t0Probe = System.nanoTime();
 		boolean p = _cache.containsKey(key);  // in cache or in disk
+		long t1Probe = System.nanoTime();
+		incrementReuseProbeTime(t1Probe - t0Probe);
 		if (!p && DMLScript.STATISTICS && LineageCacheEviction._removelist.containsKey(key))
 			// The sought entry was in cache but removed later 
 			LineageCacheStatistics.incrementDelHits();
