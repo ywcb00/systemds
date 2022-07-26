@@ -68,7 +68,9 @@ public class LineageCache
 	private static AtomicLong reuseSavedTime = new AtomicLong();
 	private static AtomicLong reuseCheckTime1 = new AtomicLong();
 	private static AtomicLong reuseCheckTime2 = new AtomicLong();
-	private static AtomicLong reuseCheckTime3 = new AtomicLong();
+	private static AtomicLong reuseCheckTime3a = new AtomicLong();
+	private static AtomicLong reuseCheckTime3b = new AtomicLong();
+	private static AtomicLong reuseCheckTime3c = new AtomicLong();
 	private static AtomicLong reuseReuseTime1 = new AtomicLong();
 	private static AtomicLong reuseReuseTime2 = new AtomicLong();
 	private static AtomicLong reuseReuseTime3 = new AtomicLong();
@@ -78,7 +80,9 @@ public class LineageCache
 		printReuseSavedTime();
 		printReuseCheckTime1();
 		printReuseCheckTime2();
-		printReuseCheckTime3();
+		printReuseCheckTime3a();
+		printReuseCheckTime3b();
+		printReuseCheckTime3c();
 		printReuseReuseTime1();
 		printReuseReuseTime2();
 		printReuseReuseTime3();
@@ -109,12 +113,28 @@ public class LineageCache
 		reuseCheckTime2.addAndGet(inc);
 	}
 
-	private static void printReuseCheckTime3() {
-		System.out.println("***** time for reuse check 3: " + "<<21>>" + (((double)reuseCheckTime3.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	private static void printReuseCheckTime3a() {
+		System.out.println("***** time for reuse check 3: " + "<<21>>" + (((double)reuseCheckTime3a.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
 	}
 
-	private static void incrementReuseCheckTime3(long inc) {
-		reuseCheckTime3.addAndGet(inc);
+	private static void incrementReuseCheckTime3a(long inc) {
+		reuseCheckTime3a.addAndGet(inc);
+	}
+
+	private static void printReuseCheckTime3b() {
+		System.out.println("***** time for reuse check 3: " + "<<21>>" + (((double)reuseCheckTime3b.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	private static void incrementReuseCheckTime3b(long inc) {
+		reuseCheckTime3b.addAndGet(inc);
+	}
+
+	private static void printReuseCheckTime3c() {
+		System.out.println("***** time for reuse check 3: " + "<<21>>" + (((double)reuseCheckTime3c.getAndSet(0)) / 1000000000) + "<</21>>" + "secs");
+	}
+
+	private static void incrementReuseCheckTime3c(long inc) {
+		reuseCheckTime3c.addAndGet(inc);
 	}
 
 	private static void printReuseReuseTime1() {
@@ -208,12 +228,17 @@ public class LineageCache
 
 				t1Check = System.nanoTime();
 				incrementReuseCheckTime2(t1Check - t0Check);
-				t0Check = System.nanoTime();
 
 				//try to reuse full or partial intermediates
 				for (MutablePair<LineageItem,LineageCacheEntry> item : liList) {
+					t0Check = System.nanoTime();
 					if (LineageCacheConfig.getCacheType().isFullReuse())
 						e = LineageCache.probe(item.getKey()) ? getIntern(item.getKey()) : null;
+
+					t1Check = System.nanoTime();
+					incrementReuseCheckTime3a(t1Check - t0Check);
+					t0Check = System.nanoTime();
+
 					//TODO need to also move execution of compensation plan out of here
 					//(create lazily evaluated entry)
 					if (e == null && LineageCacheConfig.getCacheType().isPartialReuse())
@@ -222,7 +247,11 @@ public class LineageCache
 					//TODO: MultiReturnBuiltin and partial rewrites
 					reuseAll &= (e != null);
 					item.setValue(e);
-					
+
+					t1Check = System.nanoTime();
+					incrementReuseCheckTime3b(t1Check - t0Check);
+					t0Check = System.nanoTime();
+
 					//create a placeholder if no reuse to avoid redundancy
 					//(e.g., concurrent threads that try to start the computation)
 					if(e == null && isMarkedForCaching(inst, ec)) {
@@ -234,12 +263,12 @@ public class LineageCache
 							putIntern(item.getKey(), gpuinst._output.getDataType(), null, null,  0);
 						//FIXME: different o/p datatypes for MultiReturnBuiltins.
 					}
+
+					t1Check = System.nanoTime();
+					incrementReuseCheckTime3c(t1Check - t0Check);
 				}
 			}
 			reuse = reuseAll;
-
-			t1Check = System.nanoTime();
-			incrementReuseCheckTime3(t1Check - t0Check);
 
 			if(reuse) { //reuse
 
