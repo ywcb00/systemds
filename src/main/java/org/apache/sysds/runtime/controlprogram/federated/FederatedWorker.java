@@ -95,9 +95,9 @@ public class FederatedWorker {
 		// int par_conn = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.FEDERATED_PAR_CONN);
 		// final int EVENT_LOOP_THREADS = (par_conn > 0) ? par_conn : InfrastructureAnalyzer.getLocalParallelism();
 		NioEventLoopGroup bossGroup = new NioEventLoopGroup(1);
-		ThreadPoolExecutor workerTPE = new ThreadPoolExecutor(1, Integer.MAX_VALUE, 10, TimeUnit.SECONDS,
-			new SynchronousQueue<Runnable>(true));
-		NioEventLoopGroup workerGroup = new NioEventLoopGroup(1, workerTPE);
+		// ThreadPoolExecutor workerTPE = new ThreadPoolExecutor(1, Integer.MAX_VALUE, 10, TimeUnit.SECONDS,
+		// 	new SynchronousQueue<Runnable>(true));
+		NioEventLoopGroup workerGroup = new NioEventLoopGroup(1);
 
 		final boolean ssl = ConfigurationManager.isFederatedSSL();
 		try {
