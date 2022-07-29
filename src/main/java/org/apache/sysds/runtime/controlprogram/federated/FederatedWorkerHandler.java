@@ -50,7 +50,7 @@ import org.apache.sysds.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse.ResponseType;
 import org.apache.sysds.runtime.controlprogram.parfor.stat.Timing;
-import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
+// import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.Instruction.IType;
 import org.apache.sysds.runtime.instructions.InstructionParser;
@@ -66,8 +66,8 @@ import org.apache.sysds.runtime.lineage.LineageCacheConfig;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
-import org.apache.sysds.runtime.matrix.operators.MultiThreadedOperator;
-import org.apache.sysds.runtime.matrix.operators.Operator;
+// import org.apache.sysds.runtime.matrix.operators.MultiThreadedOperator;
+// import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.meta.MetaDataAll;
 import org.apache.sysds.runtime.meta.MetaDataFormat;
@@ -504,7 +504,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		final Instruction ins = InstructionParser.parseSingleInstruction((String) request.getParam(0));
 		final long tid = request.getTID();
 		final ExecutionContext ec = getContextForInstruction(tid, ins, ecm);
-		setThreads(ins);
+		// setThreads(ins);
 		exec(ec, ins);
 		adaptToWorkload(ec, _fan, tid, ins);
 		return new FederatedResponse(ResponseType.SUCCESS_EMPTY);
@@ -523,14 +523,14 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		return ec;
 	}
 
-	private static void setThreads(Instruction ins){
-		final Operator op = ins.getOperator();
-		if(op instanceof MultiThreadedOperator) {
-			final int par_inst = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.FEDERATED_PAR_INST);
-			final int k = (par_inst > 0) ? par_inst : InfrastructureAnalyzer.getLocalParallelism();
-			((MultiThreadedOperator)op).setNumThreads(k);
-		}
-	}
+	// private static void setThreads(Instruction ins){
+	// 	final Operator op = ins.getOperator();
+	// 	if(op instanceof MultiThreadedOperator) {
+	// 		final int par_inst = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.FEDERATED_PAR_INST);
+	// 		final int k = (par_inst > 0) ? par_inst : InfrastructureAnalyzer.getLocalParallelism();
+	// 		((MultiThreadedOperator)op).setNumThreads(k);
+	// 	}
+	// }
 
 	private static void exec(ExecutionContext ec, Instruction ins){
 		final BasicProgramBlock pb = new BasicProgramBlock(null);
