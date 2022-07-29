@@ -21,9 +21,9 @@ package org.apache.sysds.runtime.controlprogram.federated;
 
 import java.io.Serializable;
 import java.security.cert.CertificateException;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+// import java.util.concurrent.SynchronousQueue;
+// import java.util.concurrent.ThreadPoolExecutor;
+// import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLException;
 
@@ -34,7 +34,7 @@ import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.CacheBlock;
 import org.apache.sysds.runtime.controlprogram.paramserv.NetworkTrafficCounter;
-import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
+// import org.apache.sysds.runtime.controlprogram.parfor.stat.InfrastructureAnalyzer;
 import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
@@ -92,12 +92,12 @@ public class FederatedWorker {
 
 	private void run() {
 		log.info("Setting up Federated Worker on port " + _port);
-		int par_conn = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.FEDERATED_PAR_CONN);
-		final int EVENT_LOOP_THREADS = (par_conn > 0) ? par_conn : InfrastructureAnalyzer.getLocalParallelism();
+		// int par_conn = ConfigurationManager.getDMLConfig().getIntValue(DMLConfig.FEDERATED_PAR_CONN);
+		// final int EVENT_LOOP_THREADS = (par_conn > 0) ? par_conn : InfrastructureAnalyzer.getLocalParallelism();
 		NioEventLoopGroup bossGroup = new NioEventLoopGroup(1);
-		ThreadPoolExecutor workerTPE = new ThreadPoolExecutor(1, Integer.MAX_VALUE, 10, TimeUnit.SECONDS,
-			new SynchronousQueue<Runnable>(true));
-		NioEventLoopGroup workerGroup = new NioEventLoopGroup(EVENT_LOOP_THREADS, workerTPE);
+		// ThreadPoolExecutor workerTPE = new ThreadPoolExecutor(1, Integer.MAX_VALUE, 10, TimeUnit.SECONDS,
+		// 	new SynchronousQueue<Runnable>(true));
+		NioEventLoopGroup workerGroup = new NioEventLoopGroup(1);
 
 		final boolean ssl = ConfigurationManager.isFederatedSSL();
 		try {
