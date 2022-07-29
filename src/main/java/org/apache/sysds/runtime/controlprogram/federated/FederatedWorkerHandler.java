@@ -314,29 +314,29 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		CacheableData<?> cd = null;
 		final String sId = String.valueOf(id);
 
-		boolean linReuse = (!ReuseCacheType.isNone() && dataType == DataType.MATRIX);
-		if(!linReuse || !LineageCache.reuseFedRead(sId, dataType, linItem, ec)) {
+		// boolean linReuse = (!ReuseCacheType.isNone() && dataType == DataType.MATRIX);
+		// if(!linReuse || !LineageCache.reuseFedRead(sId, dataType, linItem, ec)) {
 			// Lookup read cache if reuse is disabled and we skipped storing in the
 			// lineage cache due to other constraints
-			cd = _frc.get(filename, !linReuse);
-			try {
-				if(cd == null) { // data is neither in lineage cache nor in read cache
+			// cd = _frc.get(filename, !linReuse);
+			// try {
+				// if(cd == null) { // data is neither in lineage cache nor in read cache
 					cd = localBlock == null ? readDataNoReuse(filename, dataType, mc) : ExecutionContext.createCacheableData(localBlock); // actual read of the data
-					if(linReuse) // put the object into the lineage cache
-						LineageCache.putFedReadObject(cd, linItem, ec);
-					else
-						_frc.setData(filename, cd); // set the data into the read cache entry
-				}
+				// 	if(linReuse) // put the object into the lineage cache
+				// 		LineageCache.putFedReadObject(cd, linItem, ec);
+				// 	else
+				// 		_frc.setData(filename, cd); // set the data into the read cache entry
+				// }
 				ec.setVariable(sId, cd);
 
-			} catch(Exception ex) {
-				if(linReuse)
-					LineageCache.putFedReadObject(null, linItem, ec); // removing the placeholder
-				else
-					_frc.setInvalid(filename);
-				throw ex;
-			}
-		}
+		// 	} catch(Exception ex) {
+		// 		if(linReuse)
+		// 			LineageCache.putFedReadObject(null, linItem, ec); // removing the placeholder
+		// 		else
+		// 			_frc.setInvalid(filename);
+		// 		throw ex;
+		// 	}
+		// }
 		
 		if(shouldTryAsyncCompress()) // TODO: replace the reused object
 			CompressedMatrixBlockFactory.compressAsync(ec, sId);
