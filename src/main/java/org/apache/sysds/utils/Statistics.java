@@ -698,12 +698,12 @@ public class Statistics
 				mct = new MemConsumption();
 				new Thread(mct).start();
 			}
+			printInitialMemConsumption();
 		}
 
 		public void run() {
 			while(!exitFlag.get()) {
-				System.gc();
-				long consumedMem = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+				long consumedMem = getConsumedMem();
 				maxPeak.set(Math.max(consumedMem, maxPeak.get()));
 				try {
 					Thread.sleep(20);
@@ -711,6 +711,16 @@ public class Statistics
 					e.printStackTrace();
 				}
 			}
+		}
+
+		private static long getConsumedMem() {
+			System.gc();
+			return (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory());
+		}
+
+		private static void printInitialMemConsumption() {
+			long initMemConsumption = getConsumedMem();
+			System.out.println("***** Initial mem consumption: <<28>>" + ((double)initMemConsumption / (1024 * 1024)) + "<</28>>mb");
 		}
 
 		public void stop() {
