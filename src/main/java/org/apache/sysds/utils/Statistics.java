@@ -681,7 +681,6 @@ public class Statistics
 			sb.append(ParamServStatistics.displayFloStatistics());
 		}
 
-		MemConsumption.mct.stop();
 		System.out.println("***** Maximal mem consumption: <<10>>" + ((double)MemConsumption.mct.getMaxPeak() / (1024 * 1024)) + "<</10>>mb");
 		MemConsumption.mct.reset();
 

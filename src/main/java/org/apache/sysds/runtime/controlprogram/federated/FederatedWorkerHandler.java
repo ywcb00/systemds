@@ -74,6 +74,7 @@ import org.apache.sysds.runtime.meta.MetaDataFormat;
 import org.apache.sysds.runtime.privacy.DMLPrivacyException;
 import org.apache.sysds.runtime.privacy.PrivacyMonitor;
 import org.apache.sysds.utils.Statistics;
+import org.apache.sysds.utils.Statistics.MemConsumption;
 import org.apache.sysds.utils.stats.ParamServStatistics;
 
 import io.netty.channel.ChannelFuture;
@@ -616,6 +617,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	private FederatedResponse execClear(ExecutionContextMap ecm) {
 
 		if(FederatedWorker._clearWorker) {
+			MemConsumption.mct.stop();
 			FederatedWorker._newestFRC.clear();
 			LineageCache.resetCache();
 			System.gc();
