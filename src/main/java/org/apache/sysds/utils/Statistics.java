@@ -696,8 +696,8 @@ public class Statistics
 			if(mct == null || mct.isStopped()) {
 				mct = new MemConsumption();
 				new Thread(mct).start();
-				printInitialMemConsumption();
 			}
+			printInitialMemConsumption();
 		}
 
 		public void run() {
