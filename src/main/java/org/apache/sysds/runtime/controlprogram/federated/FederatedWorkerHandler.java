@@ -167,11 +167,17 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 				new FederatedWorkerHandlerException("Received object of wrong instance 'FederatedRequest[]'."));
 		final FederatedRequest[] requests = (FederatedRequest[]) msg;
 
-		if(Arrays.stream(requests).anyMatch(fr -> fr.getType() == RequestType.PUT_VAR))
+		boolean printTime = false;
+		if(Arrays.stream(requests).anyMatch(fr -> fr.getType() == RequestType.PUT_VAR)) {
 			System.out.println("***** System time when receiving put var request: " + "<<19>>" + System.nanoTime() + "<</19>>");
+			printTime = true;
+		}
 
 		try {
-			return createResponse(requests, remoteHost);
+			FederatedResponse resp = createResponse(requests, remoteHost);
+			if(printTime)
+				System.out.println("***** System time when sending response back to coordinator: " + "<<18>>" + System.nanoTime() + "<</18>>");
+			return resp;
 		}
 		catch(DMLPrivacyException | FederatedWorkerHandlerException ex) {
 			// Here we control the error message, therefore it is allowed to send the stack trace with the response

@@ -346,8 +346,11 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if(wait)
+		if(wait) {
 			FederationUtils.waitFor(ret);
+			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR))
+				System.out.println("***** System time when receiving response from the worker: " + "<<19>>" + System.nanoTime() + "<</19>>");
+		}
 		return ret.toArray(new Future[0]);
 	}
 
@@ -374,8 +377,11 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if( wait )
+		if( wait ) {
 			FederationUtils.waitFor(ret);
+			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR))
+				System.out.println("***** System time when receiving response from the worker: " + "<<19>>" + System.nanoTime() + "<</19>>");
+		}
 		return ret.toArray(new Future[0]);
 	}
 
@@ -403,8 +409,11 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if(wait)
+		if(wait) {
 			FederationUtils.waitFor(ret);
+			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR))
+				System.out.println("***** System time when receiving response from the worker: " + "<<19>>" + System.nanoTime() + "<</19>>");
+		}
 		return ret.toArray(new Future[0]);
 	}
 
