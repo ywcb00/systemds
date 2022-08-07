@@ -163,25 +163,29 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	}
 
 	private FederatedResponse createResponse(Object msg, String remoteHost) {
-		Statistics.MemConsumption.startMemConsumptionThread();
+		MemConsumption mct = MemConsumption.startMemConsumptionThread();
 
 		if(!(msg instanceof FederatedRequest[]))
 			return new FederatedResponse(ResponseType.ERROR,
 				new FederatedWorkerHandlerException("Received object of wrong instance 'FederatedRequest[]'."));
 		final FederatedRequest[] requests = (FederatedRequest[]) msg;
 		try {
-			return createResponse(requests, remoteHost);
+			FederatedResponse res = createResponse(requests, remoteHost);
+			mct.printStopAndReset();
+			return res;
 		}
 		catch(DMLPrivacyException | FederatedWorkerHandlerException ex) {
 			// Here we control the error message, therefore it is allowed to send the stack trace with the response
 			LOG.error("Exception in FederatedWorkerHandler while processing requests:\n"
 				+ Arrays.toString(requests), ex);
+			mct.printStopAndReset();
 			return new FederatedResponse(ResponseType.ERROR, ex);
 		}
 		catch(Exception ex) {
 			// In all other cases it is not safe to send the exception message to the caller
 			final String error = "Exception thrown while processing requests:\n" + Arrays.toString(requests);
 			LOG.error(error, ex);
+			mct.printStopAndReset();
 			return new FederatedResponse(ResponseType.ERROR, new FederatedWorkerHandlerException(error));
 		}
 	}
@@ -616,7 +620,6 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	private FederatedResponse execClear(ExecutionContextMap ecm) {
 
 		if(FederatedWorker._clearWorker) {
-			MemConsumption.mct.stop();
 			FederatedWorker._newestFRC.clear();
 			LineageCache.resetCache();
 			System.gc();

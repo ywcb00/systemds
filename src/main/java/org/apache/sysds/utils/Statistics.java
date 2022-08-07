@@ -681,9 +681,6 @@ public class Statistics
 			sb.append(ParamServStatistics.displayFloStatistics());
 		}
 
-		System.out.println("***** Maximal mem consumption: <<10>>" + ((double)MemConsumption.mct.getMaxPeak() / (1024 * 1024)) + "<</10>>mb");
-		MemConsumption.mct.reset();
-
 		return sb.toString();
 	}
 
@@ -691,13 +688,11 @@ public class Statistics
 		private AtomicLong maxPeak = new AtomicLong();
 		private AtomicBoolean exitFlag = new AtomicBoolean(false);
 
-		public static MemConsumption mct;
-		public static void startMemConsumptionThread() {
-			if(mct == null || mct.isStopped()) {
-				mct = new MemConsumption();
-				new Thread(mct).start();
-			}
-			printInitialMemConsumption();
+		public static MemConsumption startMemConsumptionThread() {
+			MemConsumption mct = new MemConsumption();
+			new Thread(mct).start();
+			mct.printInitialMemConsumption();
+			return mct;
 		}
 
 		public void run() {
@@ -712,17 +707,23 @@ public class Statistics
 			}
 		}
 
-		private static long getConsumedMem() {
+		private long getConsumedMem() {
 			System.gc();
 			return (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory());
 		}
 
-		private static void printInitialMemConsumption() {
+		public void printStopAndReset() {
+			stop();
+			System.out.println("***** Maximal mem consumption: <<10>>" + ((double)getMaxPeak() / (1024 * 1024)) + "<</10>>mb");
+			reset();
+		}
+
+		private void printInitialMemConsumption() {
 			long initMemConsumption = getConsumedMem();
 			System.out.println("***** Initial mem consumption: <<28>>" + ((double)initMemConsumption / (1024 * 1024)) + "<</28>>mb");
 		}
 
-		public void stop() {
+		private void stop() {
 			exitFlag.set(true);
 		}
 
@@ -734,7 +735,7 @@ public class Statistics
 			return maxPeak.get();
 		}
 
-		public void reset() {
+		private void reset() {
 			maxPeak.set(0);
 		}
 	}
