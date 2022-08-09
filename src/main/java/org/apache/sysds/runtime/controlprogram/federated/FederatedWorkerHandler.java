@@ -163,36 +163,32 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	}
 
 	private FederatedResponse createResponse(Object msg, String remoteHost) {
-		MemConsumption mct = MemConsumption.startMemConsumptionThread();
-
 		if(!(msg instanceof FederatedRequest[]))
 			return new FederatedResponse(ResponseType.ERROR,
 				new FederatedWorkerHandlerException("Received object of wrong instance 'FederatedRequest[]'."));
 		final FederatedRequest[] requests = (FederatedRequest[]) msg;
 		try {
-			FederatedResponse res = createResponse(requests, remoteHost);
-			mct.printStopAndReset();
-			return res;
+			return createResponse(requests, remoteHost);
 		}
 		catch(DMLPrivacyException | FederatedWorkerHandlerException ex) {
 			// Here we control the error message, therefore it is allowed to send the stack trace with the response
 			LOG.error("Exception in FederatedWorkerHandler while processing requests:\n"
 				+ Arrays.toString(requests), ex);
-			mct.printStopAndReset();
 			return new FederatedResponse(ResponseType.ERROR, ex);
 		}
 		catch(Exception ex) {
 			// In all other cases it is not safe to send the exception message to the caller
 			final String error = "Exception thrown while processing requests:\n" + Arrays.toString(requests);
 			LOG.error(error, ex);
-			mct.printStopAndReset();
 			return new FederatedResponse(ResponseType.ERROR, new FederatedWorkerHandlerException(error));
 		}
 	}
 
 	private FederatedResponse createResponse(FederatedRequest[] requests, String remoteHost)
 		throws DMLPrivacyException, FederatedWorkerHandlerException, Exception {
-			
+
+		MemConsumption mct = MemConsumption.startMemConsumptionThread();
+
 		FederatedResponse response = null; // last response
 		boolean containsCLEAR = false;
 		long clearReqPid = -1;
@@ -212,6 +208,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			// select the response
 			if(!tmp.isSuccessful()) {
 				LOG.error("Command " + t + " resulted in error:\n" + tmp.getErrorMessage());
+				mct.printStopAndReset();
 				return tmp; // Return first error without executing anything further
 			}
 			else if(t == RequestType.GET_VAR) {
@@ -252,6 +249,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			printStatistics();
 		}
 
+		mct.printStopAndReset();
 		return response;
 	}
 

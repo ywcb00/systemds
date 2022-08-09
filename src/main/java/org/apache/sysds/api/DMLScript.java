@@ -192,7 +192,6 @@ public class DMLScript
 	 */
 	public static void main(String[] args)
 	{
-		Statistics.MemConsumption.startMemConsumptionThread();
 		try{
 			Configuration conf = new Configuration(ConfigurationManager.getCachedJobConf());
 			String[] otherArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
