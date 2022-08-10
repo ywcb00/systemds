@@ -123,8 +123,12 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	
 	@Override
 	public void channelRead(ChannelHandlerContext ctx, Object msg) {
-		ctx.writeAndFlush(createResponse(msg, ctx.channel().remoteAddress()))
-			.addListener(new CloseListener());
+		FederatedResponse res = createResponse(msg, ctx.channel().remoteAddress());
+		System.out.println("FederatedWorkerHandler.java:127 - writing on channel");
+		ctx.write(res).addListener(new CloseListener());
+		System.out.println("FederatedWorkerHandler.java:129 - flushing channel");
+		ctx.flush();
+		System.out.println("FederatedWorkerHandler.java:131 - channel read finished");
 	}
 
 	protected FederatedResponse createResponse(Object msg) {
