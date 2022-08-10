@@ -358,14 +358,16 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		else // matrix read
 			response = new FederatedResponse(ResponseType.SUCCESS, new Object[] {id, mc});
 
-		long t1 = System.nanoTime();
-		System.out.println("***** time for read request: " + "<<12>>" + (((double)t1 - t0) / 1000000000) + "<</12>>" + "secs");
 		if(!linReuse) {
 			t0 = System.nanoTime();
 			cd.acquireRead();
-			t1 = System.nanoTime();
+			long t1 = System.nanoTime();
 			System.out.println("***** time for the actual read of the data: " + "<<13>>" + (((double)t1 - t0) / 1000000000) + "<</13>>" + "secs");
 		}
+
+		long t1 = System.nanoTime();
+		System.out.println("***** time for read request: " + "<<12>>" + (((double)t1 - t0) / 1000000000) + "<</12>>" + "secs");
+
 		return response;
 	}
 
