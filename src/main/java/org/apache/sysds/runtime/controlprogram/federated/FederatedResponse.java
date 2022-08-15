@@ -44,6 +44,8 @@ public class FederatedResponse implements Serializable {
 	private Object[] _data;
 	private Map<PrivacyLevel,LongAdder> checkedConstraints;
 
+	public long putProcessingTime = 0;
+
 	private transient LineageItem _linItem = null; // not included in serialized object
 	
 	public FederatedResponse(ResponseType status) {
