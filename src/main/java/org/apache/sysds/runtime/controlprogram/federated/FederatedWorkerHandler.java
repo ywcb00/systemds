@@ -600,6 +600,8 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	private FederatedResponse execClear(ExecutionContextMap ecm) {
 
 		LineageCache.printReuseTimes();
+		LineageCache.printReadReuseTimes();
+		LineageCache.printSerialReuseTimes();
 
 		if(FederatedWorker._clearWorker) {
 			FederatedWorker._newestFRC.clear();

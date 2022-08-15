@@ -69,10 +69,30 @@ public class LineageCache
 	private static AtomicLong reuseCheckTime = new AtomicLong();
 	private static AtomicLong reusePutTime = new AtomicLong();
 
+	private static AtomicLong readReuseSavedTime = new AtomicLong();
+	private static AtomicLong readReuseCheckTime = new AtomicLong();
+	private static AtomicLong readReusePutTime = new AtomicLong();
+
+	private static AtomicLong serialReuseSavedTime = new AtomicLong();
+	private static AtomicLong serialReuseCheckTime = new AtomicLong();
+	private static AtomicLong serialReusePutTime = new AtomicLong();
+
 	public static void printReuseTimes() {
 		System.out.println("***** saved compute time from flr: " + "<<20>>" + ((double)reuseSavedTime.getAndSet(0) / 1000000000) + "<</20>>" + "secs");
 		System.out.println("***** time for checking reuse from flr: " + "<<21>>" + ((double)reuseCheckTime.getAndSet(0) / 1000000000) + "<</21>>" + "secs");
 		System.out.println("***** time for putting value into the cache from flr: " + "<<22>>" + ((double)reusePutTime.getAndSet(0) / 1000000000) + "<</22>>" + "secs");
+	}
+
+	public static void printReadReuseTimes() {
+		System.out.println("***** saved compute time from lrr: " + "<<13>>" + ((double)readReuseSavedTime.getAndSet(0) / 1000000000) + "<</13>>" + "secs");
+		System.out.println("***** time for checking reuse from lrr: " + "<<29>>" + ((double)readReuseCheckTime.getAndSet(0) / 1000000000) + "<</29>>" + "secs");
+		System.out.println("***** time for putting value into the cache from lrr: " + "<<30>>" + ((double)readReusePutTime.getAndSet(0) / 1000000000) + "<</30>>" + "secs");
+	}
+
+	public static void printSerialReuseTimes() {
+		System.out.println("***** saved compute time from rsr: " + "<<23>>" + ((double)serialReuseSavedTime.getAndSet(0) / 1000000000) + "<</23>>" + "secs");
+		System.out.println("***** time for checking reuse from rsr: " + "<<24>>" + ((double)serialReuseCheckTime.getAndSet(0) / 1000000000) + "<</24>>" + "secs");
+		System.out.println("***** time for putting value into the cache from rsr: " + "<<25>>" + ((double)serialReusePutTime.getAndSet(0) / 1000000000) + "<</25>>" + "secs");
 	}
 
 	static {
@@ -426,6 +446,8 @@ public class LineageCache
 		if (ReuseCacheType.isNone() || dataType != DataType.MATRIX)
 			return false;
 
+		long t0Check = System.nanoTime();
+
 		LineageCacheEntry e = null;
 		synchronized(_cache) {
 			if(LineageCache.probe(li)) {
@@ -433,15 +455,22 @@ public class LineageCache
 			}
 			else {
 				putIntern(li, dataType, null, null, 0);
+				long t1Check = System.nanoTime();
+				readReuseCheckTime.addAndGet(t1Check - t0Check);
 				return false; // direct return after placing the placeholder
 			}
 		}
 
 		if(e != null && e.isMatrixValue()) {
 			MatrixBlock mb = e.getMBValue(); // waiting if the value is not set yet
-			if (mb == null || e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+			if (mb == null || e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+				long t1Check = System.nanoTime();
+				readReuseCheckTime.addAndGet(t1Check - t0Check);
 				return false;  // the executing thread removed this entry from cache
+			}
 			ec.setMatrixOutput(outName, e.getMBValue());
+
+			readReuseSavedTime.addAndGet(e._computeTime);
 
 			if (DMLScript.STATISTICS) { //increment saved time
 				FederatedStatistics.incFedReuseReadHitCount();
@@ -449,14 +478,20 @@ public class LineageCache
 				LineageCacheStatistics.incrementSavedComputeTime(e._computeTime);
 			}
 
+			long t1Check = System.nanoTime();
+			readReuseCheckTime.addAndGet(t1Check - t0Check);
 			return true;
 		}
+		long t1Check = System.nanoTime();
+		readReuseCheckTime.addAndGet(t1Check - t0Check);
 		return false;
 	}
 
 	public static byte[] reuseSerialization(LineageItem objLI) {
 		if (ReuseCacheType.isNone() || objLI == null)
 			return null;
+
+		long t0Check = System.nanoTime();
 
 		LineageItem li = LineageItemUtils.getSerializedFedResponseLineageItem(objLI);
 
@@ -467,22 +502,36 @@ public class LineageCache
 			}
 			else {
 				putIntern(li, DataType.UNKNOWN, null, null, 0);
+				long t1Check = System.nanoTime();
+				serialReuseCheckTime.addAndGet(t1Check - t0Check);
 				return null; // direct return after placing the placeholder
 			}
 		}
 
 		if(e != null && e.isSerializedBytes()) {
 			byte[] sBytes = e.getSerializedBytes(); // waiting if the value is not set yet
-			if (sBytes == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+			if (sBytes == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+				long t1Check = System.nanoTime();
+				serialReuseCheckTime.addAndGet(t1Check - t0Check);
 				return null;  // the executing thread removed this entry from cache
+			}
+
+			serialReuseSavedTime.addAndGet(e._computeTime);
 
 			if (DMLScript.STATISTICS) { // increment statistics
 				LineageCacheStatistics.incrementSavedComputeTime(e._computeTime);
 				FederatedStatistics.aggFedSerializationReuse(sBytes.length);
 			}
 
+			long t1Check = System.nanoTime();
+			serialReuseCheckTime.addAndGet(t1Check - t0Check);
+
 			return sBytes;
 		}
+
+		long t1Check = System.nanoTime();
+		serialReuseCheckTime.addAndGet(t1Check - t0Check);
+
 		return null;
 	}
 
@@ -779,6 +828,8 @@ public class LineageCache
 		if(ReuseCacheType.isNone())
 			return;
 
+		long t0Put = System.nanoTime();
+
 		LineageCacheEntry entry = _cache.get(li);
 		if(entry != null && data instanceof MatrixObject) {
 			long t0 = System.nanoTime();
@@ -805,11 +856,16 @@ public class LineageCache
 				removePlaceholder(li);
 			}
 		}
+
+		long t1Put = System.nanoTime();
+		readReusePutTime.addAndGet(t1Put - t0Put);
 	}
 
 	public static void putSerializedObject(byte[] serialBytes, LineageItem objLI, long computetime) {
 		if(ReuseCacheType.isNone())
 			return;
+
+		long t0Put = System.nanoTime();
 
 		LineageItem li = LineageItemUtils.getSerializedFedResponseLineageItem(objLI);
 
@@ -837,6 +893,9 @@ public class LineageCache
 				removePlaceholder(li);
 			}
 		}
+
+		long t1Put = System.nanoTime();
+		serialReusePutTime.addAndGet(t1Put - t0Put);
 	}
 
 	public static void resetCache() {
