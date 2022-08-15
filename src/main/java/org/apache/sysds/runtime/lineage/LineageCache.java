@@ -55,6 +55,7 @@ import org.apache.sysds.runtime.meta.MetaDataFormat;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +64,16 @@ public class LineageCache
 {
 	private static final Map<LineageItem, LineageCacheEntry> _cache = new HashMap<>();
 	protected static final boolean DEBUG = false;
+
+	private static AtomicLong reuseSavedTime = new AtomicLong();
+	private static AtomicLong reuseCheckTime = new AtomicLong();
+	private static AtomicLong reusePutTime = new AtomicLong();
+
+	public static void printReuseTimes() {
+		System.out.println("***** saved compute time from flr: " + "<<20>>" + ((double)reuseSavedTime.getAndSet(0) / 1000000000) + "<</20>>" + "secs");
+		System.out.println("***** time for checking reuse from flr: " + "<<21>>" + ((double)reuseCheckTime.getAndSet(0) / 1000000000) + "<</21>>" + "secs");
+		System.out.println("***** time for putting value into the cache from flr: " + "<<22>>" + ((double)reusePutTime.getAndSet(0) / 1000000000) + "<</22>>" + "secs");
+	}
 
 	static {
 		LineageCacheEviction.setCacheLimit(LineageCacheConfig.CPU_CACHE_FRAC); //5%
@@ -85,7 +96,9 @@ public class LineageCache
 	public static boolean reuse(Instruction inst, ExecutionContext ec) {
 		if (ReuseCacheType.isNone())
 			return false;
-		
+
+		long t0Check = System.nanoTime();
+
 		boolean reuse = false;
 		//NOTE: the check for computation CP instructions ensures that the output
 		// will always fit in memory and hence can be pinned unconditionally
@@ -160,15 +173,21 @@ public class LineageCache
 					
 					if (e.isMatrixValue() && e._gpuObject == null) {
 						MatrixBlock mb = e.getMBValue(); //wait if another thread is executing the same inst.
-						if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+						if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+							long t1Check = System.nanoTime();
+							reuseCheckTime.addAndGet(t1Check - t0Check);
 							return false;  //the executing thread removed this entry from cache
+						}
 						else
 							ec.setMatrixOutput(outName, mb);
 					}
 					else if (e.isScalarValue()) {
 						ScalarObject so = e.getSOValue(); //wait if another thread is executing the same inst.
-						if (so == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+						if (so == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+							long t1Check = System.nanoTime();
+							reuseCheckTime.addAndGet(t1Check - t0Check);
 							return false;  //the executing thread removed this entry from cache
+						}
 						else
 							ec.setScalarOutput(outName, so);
 					}
@@ -181,6 +200,7 @@ public class LineageCache
 						gpuReuse = true;
 					}
 
+					reuseSavedTime.addAndGet(e._computeTime);
 					reuse = true;
 
 					if (DMLScript.STATISTICS) //increment saved time
@@ -195,6 +215,9 @@ public class LineageCache
 			}
 		}
 		
+		long t1Check = System.nanoTime();
+		reuseCheckTime.addAndGet(t1Check - t0Check);
+
 		return reuse;
 	}
 	
@@ -206,7 +229,9 @@ public class LineageCache
 		
 		if( !LineageCacheConfig.isMultiLevelReuse())
 			return false;
-		
+
+		long t0Check = System.nanoTime();
+
 		boolean reuse = (outParams.size() != 0);
 		long savedComputeTime = 0;
 		HashMap<String, Data> funcOutputs = new HashMap<>();
@@ -236,8 +261,11 @@ public class LineageCache
 				//convert to matrix object
 				if (e.isMatrixValue()) {
 					MatrixBlock mb = e.getMBValue();
-					if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+					if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+						long t1Check = System.nanoTime();
+						reuseCheckTime.addAndGet(t1Check - t0Check);
 						return false;  //the executing thread removed this entry from cache
+					}
 					MetaDataFormat md = new MetaDataFormat(
 						e.getMBValue().getDataCharacteristics(),FileFormat.BINARY);
 					boundValue = new MatrixObject(ValueType.FP64, boundVarName, md);
@@ -246,8 +274,11 @@ public class LineageCache
 				}
 				else {
 					boundValue = e.getSOValue();
-					if (boundValue == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+					if (boundValue == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
+						long t1Check = System.nanoTime();
+						reuseCheckTime.addAndGet(t1Check - t0Check);
 						return false;  //the executing thread removed this entry from cache
+					}
 				}
 
 				funcOutputs.put(boundVarName, boundValue);
@@ -276,10 +307,15 @@ public class LineageCache
 			//map original lineage items return to the calling site
 			funcLIs.forEach((var, li) -> ec.getLineage().set(var, li));
 
+			reuseSavedTime.addAndGet(savedComputeTime);
+
 			if (DMLScript.STATISTICS) //increment saved time
 				LineageCacheStatistics.incrementSavedComputeTime(savedComputeTime);
 		}
-		
+
+		long t1Check = System.nanoTime();
+		reuseCheckTime.addAndGet(t1Check - t0Check);
+
 		return reuse;
 	}
 	
@@ -289,16 +325,21 @@ public class LineageCache
 		if (ReuseCacheType.isNone() || udf.getOutputIds() == null)
 			return new FederatedResponse(FederatedResponse.ResponseType.ERROR);
 		//TODO: reuse only those UDFs which are part of reusable instructions
-		
+
+		long t0Check = System.nanoTime();
+
 		boolean reuse = false;
 		List<Long> outIds = udf.getOutputIds();
 		HashMap<String, Data> udfOutputs = new HashMap<>();
 		long savedComputeTime = 0;
 
 		//TODO: support multi-return UDFs
-		if (udf.getLineageItem(ec) == null)
+		if (udf.getLineageItem(ec) == null) {
 			//TODO: trace all UDFs
+			long t1Check = System.nanoTime();
+			reuseCheckTime.addAndGet(t1Check - t0Check);
 			return new FederatedResponse(FederatedResponse.ResponseType.ERROR);
+		}
 
 		LineageItem li = udf.getLineageItem(ec).getValue();
 		li.setHeight(1); //to save from early eviction
@@ -317,9 +358,12 @@ public class LineageCache
 			//convert to matrix object
 			if (e.isMatrixValue()) {
 				MatrixBlock mb = e.getMBValue();
-				if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+				if (mb == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
 					//the executing thread removed this entry from cache
+					long t1Check = System.nanoTime();
+					reuseCheckTime.addAndGet(t1Check - t0Check);
 					return new FederatedResponse(FederatedResponse.ResponseType.ERROR);
+				}
 
 				MetaDataFormat md = new MetaDataFormat(
 					e.getMBValue().getDataCharacteristics(),FileFormat.BINARY);
@@ -329,9 +373,12 @@ public class LineageCache
 			}
 			else {
 				outValue = e.getSOValue();
-				if (outValue == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED)
+				if (outValue == null && e.getCacheStatus() == LineageCacheStatus.NOTCACHED) {
 					//the executing thread removed this entry from cache
+					long t1Check = System.nanoTime();
+					reuseCheckTime.addAndGet(t1Check - t0Check);
 					return new FederatedResponse(FederatedResponse.ResponseType.ERROR);
+				}
 			}
 			udfOutputs.put(outName, outValue);
 			savedComputeTime = e._computeTime;
@@ -355,14 +402,23 @@ public class LineageCache
 				res = LineageItemUtils.setUDFResponse(udf, (MatrixObject) val);
 			}
 
+			reuseSavedTime.addAndGet(e._computeTime);
+
 			if (DMLScript.STATISTICS) {
 				//TODO: dedicated stats for federated reuse
 				LineageCacheStatistics.incrementInstHits();
 				LineageCacheStatistics.incrementSavedComputeTime(savedComputeTime);
 			}
-			
+
+			long t1Check = System.nanoTime();
+			reuseCheckTime.addAndGet(t1Check - t0Check);
+
 			return res;
 		}
+
+		long t1Check = System.nanoTime();
+		reuseCheckTime.addAndGet(t1Check - t0Check);
+
 		return new FederatedResponse(FederatedResponse.ResponseType.ERROR);
 	}
 
@@ -499,6 +555,9 @@ public class LineageCache
 
 		if (ReuseCacheType.isNone())
 			return;
+
+		long t0Put = System.nanoTime();
+
 		long computetime = System.nanoTime() - starttime;
 		if (LineageCacheConfig.isReusable(inst, ec) ) {
 			//if (!isMarkedForCaching(inst, ec)) return;
@@ -536,6 +595,9 @@ public class LineageCache
 			else
 				putValueGPU(liGpuObj, instLI, computetime);
 		}
+
+		long t1Put = System.nanoTime();
+		reusePutTime.addAndGet(t1Put - t0Put);
 	}
 	
 	private static void putValueCPU(Instruction inst, List<Pair<LineageItem, Data>> liData, long computetime)
@@ -618,6 +680,8 @@ public class LineageCache
 		if (!LineageCacheConfig.isMultiLevelReuse())
 			return;
 
+		long t0Put = System.nanoTime();
+
 		HashMap<LineageItem, LineageItem> FuncLIMap = new HashMap<>();
 		boolean AllOutputsCacheable = true;
 		for (int i=0; i<outputs.size(); i++) {
@@ -642,7 +706,10 @@ public class LineageCache
 			else
 				FuncLIMap.forEach((Li, boundLI) -> removePlaceholder(Li));
 		}
-		
+
+		long t1Put = System.nanoTime();
+		reusePutTime.addAndGet(t1Put - t0Put);
+
 		return;
 	}
 	
@@ -655,15 +722,23 @@ public class LineageCache
 		if (udf.getLineageItem(ec) == null)
 			//TODO: trace all UDFs
 			return;
+
+		long t0Put = System.nanoTime();
+
 		synchronized (_cache) {
 			LineageItem item = udf.getLineageItem(ec).getValue();
-			if (!probe(item))
+			if (!probe(item)) {
+				long t1Put = System.nanoTime();
+				reusePutTime.addAndGet(t1Put - t0Put);
 				return;
+			}
 			LineageCacheEntry entry = _cache.get(item);
 			Data data = ec.getVariable(String.valueOf(outIds.get(0)));
 			if (!(data instanceof MatrixObject) && !(data instanceof ScalarObject)) {
 				// Don't cache if the udf outputs frames
 				removePlaceholder(item);
+				long t1Put = System.nanoTime();
+				reusePutTime.addAndGet(t1Put - t0Put);
 				return;
 			}
 			
@@ -674,6 +749,8 @@ public class LineageCache
 			//remove the placeholder if the entry is bigger than the cache.
 			if (size > LineageCacheEviction.getCacheLimit()) {
 				removePlaceholder(item);
+				long t1Put = System.nanoTime();
+				reusePutTime.addAndGet(t1Put - t0Put);
 				return;
 			}
 
@@ -693,6 +770,9 @@ public class LineageCache
 			//maintain order for eviction
 			LineageCacheEviction.addEntry(entry);
 		}
+
+		long t1Put = System.nanoTime();
+		reusePutTime.addAndGet(t1Put - t0Put);
 	}
 
 	public static void putFedReadObject(Data data, LineageItem li, ExecutionContext ec) {
