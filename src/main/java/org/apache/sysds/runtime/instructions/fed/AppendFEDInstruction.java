@@ -144,23 +144,23 @@ public class AppendFEDInstruction extends BinaryFEDInstruction {
 			out.setFedMapping(newFedMap);
 		}
 		// federated/federated misaligned, federated/local, local/federated bind
-		else if( ((mo1.isFederated(FType.ROW) || mo2.isFederated(FType.ROW)) && !_cbind)
-			|| ((mo1.isFederated(FType.COL) || mo2.isFederated(FType.COL)) && _cbind) ) {
-			long id = FederationUtils.getNextFedDataID();
-			long roff = _cbind ? 0 : dc1.getRows();
-			long coff = _cbind ? dc1.getCols() : 0;
-
-			boolean isFed1 = mo1.isFederated(_cbind ? FType.COL : FType.ROW);
-			boolean isFed2 = mo2.isFederated(_cbind ? FType.COL : FType.ROW);
-			FederationMap fed1 = isFed1 ? mo1.getFedMapping() : FederationUtils.federateLocalData(mo1.getMO());
-			FederationMap fed2 = isFed2 ? mo2.getFedMapping() : FederationUtils.federateLocalData(mo2.getMO());
-
-			out.setFedMapping(fed1.identCopy(getTID(), id)
-				.bind(roff, coff, fed2.identCopy(getTID(), id)));
-		}
+		// else if( ((mo1.isFederated(FType.ROW) || mo2.isFederated(FType.ROW)) && !_cbind)
+		// 	|| ((mo1.isFederated(FType.COL) || mo2.isFederated(FType.COL)) && _cbind) ) {
+		// 	long id = FederationUtils.getNextFedDataID();
+		// 	long roff = _cbind ? 0 : dc1.getRows();
+		// 	long coff = _cbind ? dc1.getCols() : 0;
+		// 
+		// 	boolean isFed1 = mo1.isFederated(_cbind ? FType.COL : FType.ROW);
+		// 	boolean isFed2 = mo2.isFederated(_cbind ? FType.COL : FType.ROW);
+		// 	FederationMap fed1 = isFed1 ? mo1.getFedMapping() : FederationUtils.federateLocalData(mo1.getMO());
+		// 	FederationMap fed2 = isFed2 ? mo2.getFedMapping() : FederationUtils.federateLocalData(mo2.getMO());
+		// 
+		// 	out.setFedMapping(fed1.identCopy(getTID(), id)
+		// 		.bind(roff, coff, fed2.identCopy(getTID(), id)));
+		// }
 		// federated/local, local/federated bind
-		else if( ((mo1.isFederated(FType.ROW) || mo2.isFederated(FType.ROW)) && _cbind)
-			|| ((mo1.isFederated(FType.COL) || mo2.isFederated(FType.COL)) && !_cbind) ) {
+		else if( ((mo1.isFederated(FType.ROW) || mo2.isFederated(FType.ROW)))
+			|| ((mo1.isFederated(FType.COL) || mo2.isFederated(FType.COL))) ) {
 			boolean isFed1 = mo1.isFederated(_cbind ? FType.ROW : FType.COL);
 			boolean isSpark = instString.contains("SPARK");
 			MatrixLineagePair moFed = isFed1 ? mo1 : mo2;
