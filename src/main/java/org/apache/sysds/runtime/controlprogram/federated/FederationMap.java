@@ -346,10 +346,14 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if(wait) {
+		if(wait || Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
 			FederationUtils.waitFor(ret);
-			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR))
+			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
 				System.out.println("***** System time when receiving response from the worker (req includes put var): " + "<<19>>" + System.nanoTime() + "<</19>>");
+				ret.stream().map(r -> {
+						try{ return r.get(); } catch(Exception ex) { ex.printStackTrace(); throw new DMLRuntimeException(ex); }
+					}).filter(resp -> resp.putProcessingTime != 0).forEach(resp -> System.out.println("***** put processing time at the worker: " + "<<31>>" + resp.putProcessingTime + "<</31>>" + "ns"));
+			}
 		}
 		return ret.toArray(new Future[0]);
 	}
@@ -377,10 +381,13 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if( wait ) {
+		if( wait || Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR) ) {
 			FederationUtils.waitFor(ret);
 			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
 				System.out.println("***** System time when receiving response from the worker (req includes put var): " + "<<19>>" + System.nanoTime() + "<</19>>");
+				ret.stream().map(r -> {
+						try{ return r.get(); } catch(Exception ex) { ex.printStackTrace(); throw new DMLRuntimeException(ex); }
+					}).filter(resp -> resp.putProcessingTime != 0).forEach(resp -> System.out.println("***** put processing time at the worker: " + "<<31>>" + resp.putProcessingTime + "<</31>>" + "ns"));
 			}
 		}
 		return ret.toArray(new Future[0]);
@@ -410,7 +417,7 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if(wait) {
+		if(wait || Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
 			FederationUtils.waitFor(ret);
 			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
 				System.out.println("***** System time when receiving response from the worker (req includes put var): " + "<<19>>" + System.nanoTime() + "<</19>>");
