@@ -75,7 +75,8 @@ public class FederatedRequest implements Serializable {
 
 	public FederatedRequest(RequestType method, LineageItem linItem, long id, Object ... data) {
 		this(method, id, Arrays.asList(data));
-		_lineageTrace = (linItem != null) ? Lineage.serializeSingleTrace(linItem) : null;
+		_lineageTrace = null;
+		// _lineageTrace = (linItem != null) ? Lineage.serializeSingleTrace(linItem) : null;
 	}
 
 	public FederatedRequest(RequestType method, long id, List<Object> data) {
