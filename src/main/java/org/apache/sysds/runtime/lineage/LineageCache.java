@@ -739,8 +739,6 @@ public class LineageCache
 		if(ReuseCacheType.isNone())
 			return;
 
-		long t0 = System.nanoTime();
-
 		LineageItem li = LineageItemUtils.getSerializedFedResponseLineageItem(objLI);
 
 		LineageCacheEntry entry = getIntern(li);
@@ -767,9 +765,6 @@ public class LineageCache
 				removePlaceholder(li);
 			}
 		}
-
-		long t1 = System.nanoTime();
-		System.out.println("***** time for putting the serialized bytes into cache: " + "<<25>>" + (((double)t1 - t0) / 1000000000) + "<</25>>" + "secs");
 	}
 
 	public static void resetCache() {

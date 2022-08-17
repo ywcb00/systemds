@@ -160,18 +160,16 @@ public class FederatedWorker {
 					&& response.getData()[0] instanceof CacheBlock) {
 					objLI = response.getLineageItem();
 
-					long t1Check = System.nanoTime();
-					System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
-
 					byte[] cachedBytes = LineageCache.reuseSerialization(objLI);
-					t0Check = System.nanoTime();
 					if(cachedBytes != null) {
 						out.writeBytes(cachedBytes);
-						t1Check = System.nanoTime();
+						long t1Check = System.nanoTime();
 						System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
 						return;
 					}
 				}
+				long t1Check = System.nanoTime();
+				System.out.println("***** time for checking the lincache for serialized bytes: " + "<<24>>" + (((double)t1Check - t0Check) / 1000000000) + "<</24>>" + "secs");
 			}
 
 			linReusePossible &= (objLI != null);
@@ -182,11 +180,14 @@ public class FederatedWorker {
 			long t1 = linReusePossible ? System.nanoTime() : 0;
 
 			if(linReusePossible) {
+				long t0Put = System.nanoTime();
 				out.readerIndex(startIdx);
 				byte[] dst = new byte[out.readableBytes()];
 				out.readBytes(dst);
 				LineageCache.putSerializedObject(dst, objLI, (t1 - t0));
 				out.resetReaderIndex();
+				long t1Put = System.nanoTime();
+				System.out.println("***** time for putting the serialized bytes into cache: " + "<<25>>" + (((double)t1Put - t0Put) / 1000000000) + "<</25>>" + "secs");
 			}
 		}
 	}
