@@ -193,9 +193,6 @@ public class FederatedData {
 			Promise<FederatedResponse> promise = f.channel().eventLoop().newPromise();
 			handler.setPromise(promise);
 
-			if(Arrays.stream(request).anyMatch(fr -> fr.getType() == RequestType.PUT_VAR))
-				System.out.println("***** System time when sending put var request: " + "<<18>>" + System.nanoTime() + "<</18>>");
-
 			f.channel().writeAndFlush(request);
 
 			return handler.getProm();

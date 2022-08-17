@@ -341,14 +341,17 @@ public class FederationMap {
 		setThreadID(tid, frSlices, fr);
 		List<Future<FederatedResponse>> ret = new ArrayList<>();
 		int pos = 0;
+		boolean containsPut = Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR);
+		if(containsPut)
+			System.out.println("***** System time when sending put var request: " + "<<18>>" + System.nanoTime() + "<</18>>");
 		for(Pair<FederatedRange, FederatedData> e : _fedMap)
 			ret.add(e.getValue().executeFederatedOperation((frSlices != null) ? addAll(frSlices[pos++], fr) : fr));
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if(wait || Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
+		if(wait || containsPut) {
 			FederationUtils.waitFor(ret);
-			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
+			if(containsPut) {
 				System.out.println("***** System time when receiving response from the worker (req includes put var): " + "<<19>>" + System.nanoTime() + "<</19>>");
 				ret.stream().map(r -> {
 						try{ return r.get(); } catch(Exception ex) { ex.printStackTrace(); throw new DMLRuntimeException(ex); }
@@ -370,6 +373,9 @@ public class FederationMap {
 		setThreadID(tid, frSlices2, fr);
 		List<Future<FederatedResponse>> ret = new ArrayList<>();
 		int pos = 0;
+		boolean containsPut = Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR);
+		if(containsPut)
+			System.out.println("***** System time when sending put var request: " + "<<18>>" + System.nanoTime() + "<</18>>");
 		for(Pair<FederatedRange, FederatedData> e : _fedMap) {
 			if(Arrays.asList(fedRange1).contains(e.getKey())) {
 				FederatedRequest[] newFr = (frSlices1 != null) ? ((frSlices2 != null) ? (addAll(frSlices2[pos],
@@ -381,9 +387,9 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if( wait || Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR) ) {
+		if( wait || containsPut) {
 			FederationUtils.waitFor(ret);
-			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
+			if(containsPut) {
 				System.out.println("***** System time when receiving response from the worker (req includes put var): " + "<<19>>" + System.nanoTime() + "<</19>>");
 				ret.stream().map(r -> {
 						try{ return r.get(); } catch(Exception ex) { ex.printStackTrace(); throw new DMLRuntimeException(ex); }
@@ -407,6 +413,9 @@ public class FederationMap {
 		setThreadID(tid, allSlices, fr);
 		List<Future<FederatedResponse>> ret = new ArrayList<>();
 		int pos = 0;
+		boolean containsPut = Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR);
+		if(containsPut)
+			System.out.println("***** System time when sending put var request: " + "<<18>>" + System.nanoTime() + "<</18>>");
 		for(Pair<FederatedRange, FederatedData> e : _fedMap) {
 			FederatedRequest[] fedReq = fr;
 			for(FederatedRequest[] slice : frSlices)
@@ -417,9 +426,9 @@ public class FederationMap {
 
 		// prepare results (future federated responses), with optional wait to ensure the
 		// order of requests without data dependencies (e.g., cleanup RPCs)
-		if(wait || Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
+		if(wait || containsPut) {
 			FederationUtils.waitFor(ret);
-			if(Arrays.stream(fr).anyMatch(req -> req.getType() == RequestType.PUT_VAR)) {
+			if(containsPut) {
 				System.out.println("***** System time when receiving response from the worker (req includes put var): " + "<<19>>" + System.nanoTime() + "<</19>>");
 				ret.stream().map(r -> {
 						try{ return r.get(); } catch(Exception ex) { ex.printStackTrace(); throw new DMLRuntimeException(ex); }
