@@ -47,6 +47,8 @@ import java.lang.management.ManagementFactory;
 import java.text.DecimalFormat;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map.Entry;
@@ -60,6 +62,7 @@ import java.util.concurrent.atomic.LongAdder;
  */
 public class Statistics 
 {
+
 	private static class InstStats {
 		private final LongAdder time = new LongAdder();
 		private final LongAdder count = new LongAdder();
@@ -678,6 +681,63 @@ public class Statistics
 			sb.append(ParamServStatistics.displayFloStatistics());
 		}
 
+		MemConsumption.mct.stop();
+		System.out.println("***** Maximal mem consumption: <<10>>" + ((double)MemConsumption.mct.getMaxPeak() / (1024 * 1024)) + "<</10>>mb");
+		MemConsumption.mct.reset();
+
 		return sb.toString();
 	}
+
+	public static class MemConsumption implements Runnable {
+		private AtomicLong maxPeak = new AtomicLong();
+		private AtomicBoolean exitFlag = new AtomicBoolean(false);
+
+		public static MemConsumption mct;
+		public static void startMemConsumptionThread() {
+			if(mct == null || mct.isStopped()) {
+				mct = new MemConsumption();
+				new Thread(mct).start();
+				printInitialMemConsumption();
+			}
+		}
+
+		public void run() {
+			while(!exitFlag.get()) {
+				long consumedMem = getConsumedMem();
+				maxPeak.set(Math.max(consumedMem, maxPeak.get()));
+				try {
+					Thread.sleep(20);
+				} catch(Exception e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+		private static long getConsumedMem() {
+			System.gc();
+			return (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory());
+		}
+
+		private static void printInitialMemConsumption() {
+			long initMemConsumption = getConsumedMem();
+			System.out.println("***** Initial mem consumption: <<28>>" + ((double)initMemConsumption / (1024 * 1024)) + "<</28>>mb");
+		}
+
+		public void stop() {
+			exitFlag.set(true);
+		}
+
+		public boolean isStopped() {
+			return exitFlag.get();
+		}
+
+		public long getMaxPeak() {
+			return maxPeak.get();
+		}
+
+		public void reset() {
+			maxPeak.set(0);
+		}
+	}
+
 }
