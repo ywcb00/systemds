@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package org.apache.sysds.test.functions.federated.network;
+package org.apache.sysds.test.functions.federated.io;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.Future;
