@@ -25,8 +25,10 @@ import java.util.List;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedFormatDecoder;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedFormatEncoder;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedChunkProtocol;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse.ResponseType;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedWorker.FederatedResponseEncoder;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -44,15 +46,13 @@ public class FederatedFormatRoutingTest {
 	private static final long THRESHOLD_NEVER = Long.MAX_VALUE; // size guard never trips
 	private static final long THRESHOLD_ALWAYS = 1; // size guard always trips -> stream
 	private static final int PAYLOAD_DOUBLES = 20000; // ~160 KB serialized
-	private static final byte MARKER_OBJECT_ENCODER = 0;
-	private static final byte MARKER_CHUNKED = 1;
 
 	@Test
 	public void nonCacheableRoutesChunked() throws Exception {
 		// plain double[] payload is not lineage-cacheable -> streams regardless of threshold
 		FederatedResponse original = sampleResponse();
 		List<ByteBuf> wire = encode(original, THRESHOLD_NEVER);
-		Assert.assertEquals(MARKER_CHUNKED, marker(wire));
+		Assert.assertEquals(FederatedChunkProtocol.MARKER_CHUNKED, marker(wire));
 
 		EmbeddedChannel in = new EmbeddedChannel(new FederatedFormatDecoder());
 		FederatedResponse decoded = decode(in, wire);
@@ -67,7 +67,7 @@ public class FederatedFormatRoutingTest {
 		DMLScript.LINEAGE_REUSE = ReuseCacheType.REUSE_FULL;
 		try {
 			List<ByteBuf> wire = encode(cacheableResponse(), THRESHOLD_NEVER);
-			Assert.assertEquals(MARKER_OBJECT_ENCODER, marker(wire));
+			Assert.assertEquals(FederatedChunkProtocol.MARKER_OBJECT_ENCODER, marker(wire));
 
 			EmbeddedChannel in = new EmbeddedChannel(new FederatedFormatDecoder());
 			FederatedResponse decoded = decode(in, wire);
@@ -86,7 +86,7 @@ public class FederatedFormatRoutingTest {
 		DMLScript.LINEAGE_REUSE = ReuseCacheType.REUSE_FULL;
 		try {
 			List<ByteBuf> wire = encode(cacheableResponse(), THRESHOLD_ALWAYS);
-			Assert.assertEquals(MARKER_CHUNKED, marker(wire));
+			Assert.assertEquals(FederatedChunkProtocol.MARKER_CHUNKED, marker(wire));
 		}
 		finally {
 			DMLScript.LINEAGE_REUSE = prev;
@@ -100,7 +100,7 @@ public class FederatedFormatRoutingTest {
 		DMLScript.LINEAGE_REUSE = ReuseCacheType.NONE;
 		try {
 			List<ByteBuf> wire = encode(cacheableResponse(), THRESHOLD_NEVER);
-			Assert.assertEquals(MARKER_CHUNKED, marker(wire));
+			Assert.assertEquals(FederatedChunkProtocol.MARKER_CHUNKED, marker(wire));
 		}
 		finally {
 			DMLScript.LINEAGE_REUSE = prev;
@@ -120,7 +120,7 @@ public class FederatedFormatRoutingTest {
 	}
 
 	private static List<ByteBuf> encode(FederatedResponse response, long threshold) throws Exception {
-		EmbeddedChannel out = new EmbeddedChannel(new ChunkedWriteHandler(), new ObjectEncoder(),
+		EmbeddedChannel out = new EmbeddedChannel(new ChunkedWriteHandler(), new FederatedResponseEncoder(),
 			new FederatedFormatEncoder(CHUNK_SIZE, threshold));
 		out.config().setWriteBufferHighWaterMark((CHUNK_SIZE + 64) * 64);
 		List<ByteBuf> wire = new ArrayList<>();

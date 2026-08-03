@@ -50,9 +50,9 @@ public class FederatedMaxPayloadTest extends AutomatedTestBase {
 	public void transferOverTwoGigabytePayload() {
 		int port = getRandomAvailablePort();
 		startLocalFedWorkerThread(port);
+		InetSocketAddress address = new InetSocketAddress("localhost", port);
+		MatrixBlock mb = denseMatrixExceedingTwoGigabytes();
 		try {
-			MatrixBlock mb = denseMatrixExceedingTwoGigabytes();
-			InetSocketAddress address = new InetSocketAddress("localhost", port);
 			FederatedRequest request = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, 1, mb);
 
 			Future<FederatedResponse> response = FederatedData.executeFederatedOperation(address, request);

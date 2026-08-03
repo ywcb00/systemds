@@ -28,6 +28,7 @@ import java.util.List;
 
 import org.apache.sysds.runtime.controlprogram.federated.FederatedChunkDecoder;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedChunkEncoder;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedChunkProtocol;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse.ResponseType;
 import org.junit.Assert;
@@ -55,9 +56,6 @@ public class FederatedChunkCodecTest {
 	private static final int PAYLOAD_DOUBLES = 20000; // ~160 KB serialized, many CHUNK_SIZE frames
 	private static final int QUEUED_DOUBLES = 2000; // ~16 KB serialized, few enough frames to never block the queue
 	// mirrors the package-private FederatedChunkProtocol, which this test cannot import
-	private static final byte TYPE_DATA = 0;
-	private static final byte TYPE_ERROR = 2;
-	private static final int HEADER_LEN = 5;
 
 	@Test
 	public void roundTripPlainSplitsIntoManyFrames() throws Exception {
@@ -78,23 +76,29 @@ public class FederatedChunkCodecTest {
 		List<ByteBuf> frames = encode(new Unserializable(), false);
 		Assert.assertFalse("expected an error frame", frames.isEmpty());
 		ByteBuf last = frames.get(frames.size() - 1);
-		Assert.assertEquals(TYPE_ERROR, last.getByte(0));
-		Assert.assertTrue(frameMessage(last).contains("NotSerializableException"));
+		Assert.assertEquals(FederatedChunkProtocol.TYPE_ERROR, last.getByte(0));
+		String message = last.toString(FederatedChunkProtocol.HEADER_LEN, last.getInt(1), StandardCharsets.UTF_8);
+		Assert.assertTrue(message.contains("NotSerializableException"));
 		for(ByteBuf frame : frames)
 			frame.release();
 	}
 
 	@Test
-	public void errorFrameSurfacesAsException() throws Exception {
-		Throwable caught = writeAndAwaitException(errorFrame("remote failure"));
+	public void errorFrameThrowsException() throws Exception {
+		final String ERROR_MSG = "remote failure";
+		byte[] cause = ERROR_MSG.getBytes(StandardCharsets.UTF_8);
+		ByteBuf errorFrame = Unpooled.buffer(FederatedChunkProtocol.HEADER_LEN + cause.length)
+			.writeByte(FederatedChunkProtocol.TYPE_ERROR).writeInt(cause.length).writeBytes(cause);
+		Throwable caught = writeAndAwaitException(errorFrame);
 		Assert.assertTrue("expected an IOException, got " + caught, caught instanceof IOException);
 		Assert.assertTrue(String.valueOf(caught).contains("remote failure"));
 	}
 
 	@Test
-	public void unknownFrameTypeSurfacesAsException() throws Exception {
+	public void unknownFrameTypeThrowsException() throws Exception {
 		byte unknownType = 7; // not part of the protocol, must fail fast instead of stalling
-		ByteBuf unknownTypeFrame = Unpooled.buffer(HEADER_LEN).writeByte(unknownType).writeInt(0);
+		ByteBuf unknownTypeFrame = Unpooled.buffer(FederatedChunkProtocol.HEADER_LEN)
+			.writeByte(unknownType).writeInt(0);
 		Throwable caught = writeAndAwaitException(unknownTypeFrame);
 		Assert.assertTrue("expected an IOException, got " + caught, caught instanceof IOException);
 		Assert.assertTrue(String.valueOf(caught).contains("Unknown federated chunk frame type: " + unknownType));
@@ -121,16 +125,6 @@ public class FederatedChunkCodecTest {
 		for(int i = 0; i < data.length; i++)
 			data[i] = i;
 		return new FederatedResponse(ResponseType.SUCCESS, data);
-	}
-
-	private static ByteBuf errorFrame(String message) {
-		byte[] cause = message.getBytes(StandardCharsets.UTF_8);
-		return Unpooled.buffer(HEADER_LEN + cause.length).writeByte(TYPE_ERROR).writeInt(cause.length)
-			.writeBytes(cause);
-	}
-
-	private static String frameMessage(ByteBuf frame) {
-		return frame.toString(HEADER_LEN, frame.getInt(1), StandardCharsets.UTF_8);
 	}
 
 	private static Throwable writeAndAwaitException(ByteBuf frame) throws InterruptedException {
@@ -276,7 +270,7 @@ public class FederatedChunkCodecTest {
 		boolean sawFinalFrame() {
 			synchronized(_frames) {
 				for(ByteBuf frame : _frames)
-					if(frame.isReadable() && frame.getByte(0) != TYPE_DATA)
+					if(frame.isReadable() && frame.getByte(0) != FederatedChunkProtocol.TYPE_DATA)
 						return true;
 			}
 			return false;
