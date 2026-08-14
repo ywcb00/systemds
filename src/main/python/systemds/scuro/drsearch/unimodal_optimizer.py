@@ -202,45 +202,41 @@ class UnimodalOptimizer:
         if n_workers is None:
             n_workers = min(len(self.modalities), mp.cpu_count())
 
-        with mp.Manager() as manager:
+        ctx = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx) as executor:
+            future_to_modality = {
+                executor.submit(
+                    self._process_modality,
+                    modality,
+                    self._checkpoint_manager.skip_remaining_by_key.get(
+                        modality.modality_id, 0
+                    )
+                    / len(self.tasks),
+                    scheduler=None,
+                ): modality
+                for modality in self.modalities
+            }
 
-            ctx = mp.get_context("spawn")
-            with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx) as executor:
-                future_to_modality = {
-                    executor.submit(
-                        self._process_modality,
-                        modality,
-                        self._checkpoint_manager.skip_remaining_by_key.get(
-                            modality.modality_id, 0
-                        )
-                        / len(self.tasks),
-                        scheduler=None,
-                    ): modality
-                    for modality in self.modalities
-                }
+            for future in as_completed(future_to_modality):
+                modality = future_to_modality[future]
+                try:
+                    results = future.result()
+                    self._merge_results(results)
+                    new_count = self._count_results(results.results)
+                    self._checkpoint_manager.increment(modality.modality_id, new_count)
+                    self._checkpoint_manager.checkpoint_if_due(
+                        self.operator_performance.results,
+                    )
+                except Exception as e:
+                    print(f"Error processing modality {modality.modality_id}: {e}")
+                    import traceback
 
-                for future in as_completed(future_to_modality):
-                    modality = future_to_modality[future]
-                    try:
-                        results = future.result()
-                        self._merge_results(results)
-                        new_count = self._count_results(results.results)
-                        self._checkpoint_manager.increment(
-                            modality.modality_id, new_count
-                        )
-                        self._checkpoint_manager.checkpoint_if_due(
-                            self.operator_performance.results,
-                        )
-                    except Exception as e:
-                        print(f"Error processing modality {modality.modality_id}: {e}")
-                        import traceback
-
-                        traceback.print_exc()
-                        self._checkpoint_manager.save_checkpoint(
-                            self.operator_performance.results,
-                            {},
-                        )
-                        continue
+                    traceback.print_exc()
+                    self._checkpoint_manager.save_checkpoint(
+                        self.operator_performance.results,
+                        {},
+                    )
+                    continue
 
     def optimize(self):
         if self.resume:
@@ -265,10 +261,11 @@ class UnimodalOptimizer:
                 )
                 self._merge_results(local_result)
                 new_count = self._count_results(local_result.results)
-                self._checkpoint_manager.increment(modality.modality_id, new_count)
-                self._checkpoint_manager.checkpoint_if_due(
-                    self.operator_performance.results
-                )
+                if self.enable_checkpointing:
+                    self._checkpoint_manager.increment(modality.modality_id, new_count)
+                    self._checkpoint_manager.checkpoint_if_due(
+                        self.operator_performance.results
+                    )
                 if self.save_all_results:
                     self.store_results(f"{modality.modality_id}_unimodal_results.pkl")
             except Exception as e:
@@ -276,9 +273,10 @@ class UnimodalOptimizer:
                 import traceback
 
                 traceback.print_exc()
-                self._checkpoint_manager.save_checkpoint(
-                    self.operator_performance.results, {}
-                )
+                if self.enable_checkpointing:
+                    self._checkpoint_manager.save_checkpoint(
+                        self.operator_performance.results, {}
+                    )
                 raise
         return execution_time
 
@@ -338,9 +336,8 @@ class UnimodalOptimizer:
             expanded_dags_with_task_roots,
             [modality],
             self.tasks,
-            self._checkpoint_manager,
-            self.max_num_workers,
-            self.result_path,
+            max_num_workers=self.max_num_workers,
+            result_path=self.result_path,
             enable_checkpointing=self.enable_checkpointing,
         )
         start_time = time.perf_counter()
@@ -617,7 +614,7 @@ class UnimodalOptimizer:
             for context_operator in context_operators:
                 for window_size, num_window in zip(window_lengths, num_windows):
                     context_operator_instance = context_operator(agg())
-                    if hasattr(context_operator, "num_windows"):
+                    if hasattr(context_operator_instance, "num_windows"):
                         context_operator_instance.num_windows = num_window
                     elif hasattr(context_operator_instance, "window_size"):
                         context_operator_instance.window_size = window_size

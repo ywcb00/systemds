@@ -18,13 +18,31 @@
 # under the License.
 #
 # -------------------------------------------------------------
+import os
 import resource
 import sys
+import threading
+import time
+import tracemalloc
+from dataclasses import dataclass
 import numpy as np
 from sympy import Dict
 import torch
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import psutil
+import gc
+
+_CPU_MEMORY_BUDGET_FRACTION = float(
+    os.environ.get("SCURO_CPU_MEMORY_BUDGET_FRACTION", "0.5")
+)
+_CPU_MEMORY_BUDGET_GB = os.environ.get("SCURO_CPU_MEMORY_BUDGET_GB")
+
+
+def cpu_memory_budget_bytes() -> float:
+    budget = float(psutil.virtual_memory().available) * _CPU_MEMORY_BUDGET_FRACTION
+    if _CPU_MEMORY_BUDGET_GB:
+        budget = min(budget, float(_CPU_MEMORY_BUDGET_GB) * 1024**3)
+    return budget
 
 
 def get_model_size_mb(model: torch.nn.Module) -> float:
@@ -192,3 +210,98 @@ def estimate_modality_bytes(modality) -> int:
     metadata = getattr(modality, "metadata", None)
     metadata_bytes = estimate_numpy_like_bytes(metadata)
     return int(data_bytes + metadata_bytes)
+
+
+def is_cuda_oom(exc: BaseException) -> bool:
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return True
+    msg = str(exc).lower()
+    return (
+        "cuda out of memory" in msg
+        or "cudamalloc" in msg
+        or "cuda error: out of memory" in msg
+    )
+
+
+def cleanup_gpu(gpu_id: Optional[int]) -> None:
+    if gpu_id is None or not torch.cuda.is_available():
+        return
+    device = torch.device(f"cuda:{gpu_id}")
+    torch.cuda.set_device(device)
+    torch.cuda.synchronize(device)
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+@dataclass
+class MemoryMeasurement:
+    increment_bytes: int
+    footprint_bytes: int
+    input_resident_bytes: int
+    traced_peak_bytes: int
+    rss_delta_bytes: int
+    peak_abs_rss_bytes: int
+
+
+def merge_memory_measurements(
+    measurements: List[Optional[MemoryMeasurement]],
+) -> Optional[MemoryMeasurement]:
+    present = [m for m in measurements if m is not None]
+    if not present:
+        return None
+    return MemoryMeasurement(
+        increment_bytes=max(m.increment_bytes for m in present),
+        footprint_bytes=max(m.footprint_bytes for m in present),
+        input_resident_bytes=max(m.input_resident_bytes for m in present),
+        traced_peak_bytes=max(m.traced_peak_bytes for m in present),
+        rss_delta_bytes=max(m.rss_delta_bytes for m in present),
+        peak_abs_rss_bytes=max(m.peak_abs_rss_bytes for m in present),
+    )
+
+
+def measure_memory_during(
+    fn, *args, input_resident_bytes: int = 0, sample_s: float = 0.01, **kwargs
+):
+    proc = psutil.Process(os.getpid())
+    baseline_rss = proc.memory_info().rss
+    peak_rss = baseline_rss
+    stop = threading.Event()
+
+    def sampler():
+        nonlocal peak_rss
+        while not stop.is_set():
+            rss = proc.memory_info().rss
+            if rss > peak_rss:
+                peak_rss = rss
+            time.sleep(sample_s)
+
+    owns_tracing = not tracemalloc.is_tracing()
+    if owns_tracing:
+        tracemalloc.start()
+    else:
+        tracemalloc.reset_peak()
+    traced_baseline, _ = tracemalloc.get_traced_memory()
+
+    t = threading.Thread(target=sampler, daemon=True)
+    t.start()
+    try:
+        out = fn(*args, **kwargs)
+    finally:
+        stop.set()
+        t.join()
+        _, traced_peak = tracemalloc.get_traced_memory()
+        if owns_tracing:
+            tracemalloc.stop()
+
+    traced_increment = max(int(traced_peak) - int(traced_baseline), 0)
+    rss_delta = max(int(peak_rss) - int(baseline_rss), 0)
+    increment = max(traced_increment, rss_delta)
+
+    return out, MemoryMeasurement(
+        increment_bytes=increment,
+        footprint_bytes=increment + int(input_resident_bytes),
+        input_resident_bytes=int(input_resident_bytes),
+        traced_peak_bytes=traced_increment,
+        rss_delta_bytes=rss_delta,
+        peak_abs_rss_bytes=int(peak_rss),
+    )

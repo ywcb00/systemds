@@ -297,6 +297,7 @@ class HyperparameterTuner:
         wandb_entity: Optional[str] = None,
         wandb_group: Optional[str] = None,
         wandb_tags: Optional[List[str]] = None,
+        enable_checkpointing: bool = False,
     ):
         self.tasks = tasks
         self.unimodal_optimization_results = optimization_results
@@ -333,6 +334,7 @@ class HyperparameterTuner:
         self.wandb_group = wandb_group
         self.wandb_tags = wandb_tags or []
         self._wandb_run = None
+        self.enable_checkpointing = enable_checkpointing
 
     def get_modalities_by_id(self, modality_ids: List[int]) -> Modality:
         modalities = []
@@ -415,14 +417,18 @@ class HyperparameterTuner:
                             )
                         )
                     self.optimization_results.add_result(results)
-                    self._checkpoint_manager.increment(task.model.name, len(results))
-                    self._checkpoint_manager.checkpoint_if_due(
-                        self.optimization_results.results,
-                    )
+                    if self.enable_checkpointing:
+                        self._checkpoint_manager.increment(
+                            task.model.name, len(results)
+                        )
+                        self._checkpoint_manager.checkpoint_if_due(
+                            self.optimization_results.results,
+                        )
                 except Exception:
-                    self._checkpoint_manager.save_checkpoint(
-                        self.optimization_results.results, {}
-                    )
+                    if self.enable_checkpointing:
+                        self._checkpoint_manager.save_checkpoint(
+                            self.optimization_results.results, {}
+                        )
                     raise
 
         if self.save_results:

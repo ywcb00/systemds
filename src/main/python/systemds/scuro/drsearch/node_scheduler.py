@@ -19,6 +19,7 @@
 #
 # -------------------------------------------------------------
 from __future__ import annotations
+import os
 import re
 from typing import List, Dict, Optional, Any
 from collections import defaultdict, deque
@@ -29,8 +30,14 @@ from systemds.scuro.drsearch.representation_dag import (
     RepresentationNode,
 )
 from systemds.scuro.modality.modality import Modality
+from systemds.scuro.representations.representation import (
+    stats_dtype,
+    stats_itemsize,
+)
 from systemds.scuro.utils.memory_utility import gpu_memory_info
 from systemds.scuro.utils.static_variables import DEBUG
+
+_MAX_GPU_SCHEDULE_ATTEMPTS = int(os.environ.get("SCURO_MAX_GPU_SCHEDULE_ATTEMPTS", "3"))
 
 
 class MemoryAwareNodeScheduler:
@@ -66,37 +73,82 @@ class MemoryAwareNodeScheduler:
         self.success = False
         self.deadlock = False
         self.ready_nodes = []
-        self.running_nodes = []
+        self._ready_set = set()
+        self.running_nodes = set()
         self.completed_nodes = []
+        self._completed_set = set()
         self.failed_nodes = []
+        self.failed_node_reasons: Dict[str, str] = {}
         self.blocked_memory_nodes_perm = []
+        self.blocked_memory_reasons: Dict[str, str] = {}
         self.cancelled_nodes = []
+        self.deadlock_reason: Optional[str] = None
+        self.gpu_wait_attempts: Dict[str, int] = {}
+        self.cpu_fallback_nodes: List[str] = []
+        self.cpu_fallback_reasons: Dict[str, str] = {}
+        self._candidates = {
+            node_id
+            for node_id in self.topo_order
+            if node_id not in self.leaves and self.unresolved_parents[node_id] == 0
+        }
         self.n_gpu = (
             torch.cuda.device_count() if torch and torch.cuda.is_available() else 0
         )
+        leaf_cached = sum(self.node_resources[node][0] for node in self.leaves)
         self.memory_stats = {
-            "cpu_in_use": sum([self.node_resources[node][0] for node in self.leaves]),
+            "cpu_cached": leaf_cached,
+            "cpu_in_flight": 0,
             "gpu_in_use": {
                 info["index"]: int(info["total_b"] - info["free_b"])
                 for info in self.gpu_memory_info
             },
         }
+        self._cpu_reserved_nodes: Dict[str, int] = {}
         self._initialized = False
 
+    def _total_cpu_in_use(self) -> float:
+        return self.memory_stats["cpu_cached"] + self.memory_stats["cpu_in_flight"]
+
+    def _pending_admitted_cpu_bytes(self) -> int:
+        total = 0
+        for node_id in self._ready_set:
+            if node_id in self._cpu_reserved_nodes:
+                continue
+            resources = self.node_resources.get(node_id)
+            if resources:
+                total += resources[0]
+        return int(total)
+
+    def can_start_now(self, node_id: str) -> bool:
+        resources = self.node_resources.get(node_id)
+        if not resources:
+            return True
+        if not self._cpu_reserved_nodes:
+            return True
+        return resources[0] <= self.memory_budget["cpu"] - self._total_cpu_in_use()
+
     def update_cpu_memory_in_use(self, delta_bytes: int):
-        self.memory_stats["cpu_in_use"] += delta_bytes
+        self.memory_stats["cpu_cached"] += delta_bytes
 
     def get_runnable(self) -> List[RepresentationNode]:
         runnable_nodes = self._get_runnable_nodes()
 
+        admitted_bytes = self._pending_admitted_cpu_bytes()
+
         for node in runnable_nodes:
-            ok, gpu_id = self._check_memory_constraints(node)
+            if node in self._ready_set:
+                continue
+            ok, gpu_id = self._check_memory_constraints(node, admitted_bytes)
             if ok:
+                admitted_bytes += self.node_resources[node][0]
                 self.mapping[node].gpu_id = gpu_id
-                self._reserve_memory(node, gpu_id)
+                self._candidates.discard(node)
                 self.ready_nodes.append(node)
+                self._ready_set.add(node)
         contains_leaf = []
         for node in self.ready_nodes:
+            if isinstance(node, list):
+                continue
             if any(re.fullmatch(r"leaf_\d+", i) for i in self.mapping[node].inputs):
                 for mod in self.modalities:
                     if (
@@ -115,16 +167,7 @@ class MemoryAwareNodeScheduler:
         return self.ready_nodes
 
     def _get_runnable_nodes(self) -> List[str]:
-        runnable_nodes = []
-        for node in self.topo_order:
-            if (
-                node not in self.leaves
-                and self.unresolved_parents[node] == 0
-                and node not in self.running_nodes
-                and node not in self.completed_nodes
-                and node not in self.ready_nodes
-            ):
-                runnable_nodes.append(node)
+        runnable_nodes = list(self._candidates)
 
         def _score(node_id: str):
             release_bytes = 0
@@ -134,32 +177,54 @@ class MemoryAwareNodeScheduler:
                     and self.remaining_children.get(parent_id, 0) == 1
                 ):
                     release_bytes += self.node_resources[parent_id][0]
-            return (-release_bytes, node_id not in self.roots)
+            return (-release_bytes, node_id not in self.roots, node_id)
 
         runnable_nodes.sort(key=_score)
         return runnable_nodes
 
-    def add_failed_node(self, node_id: str):
+    def add_failed_node(self, node_id: str, reason: str = "unknown failure"):
         self.failed_nodes.append(node_id)
-        self.running_nodes.remove(node_id)
+        self.failed_node_reasons[node_id] = reason
+        self.running_nodes.discard(node_id)
+        self._release_execution_memory(node_id, self.mapping[node_id].gpu_id)
 
-        self._release_memory(node_id, self.mapping[node_id].gpu_id)
+    def requeue_node(self, node_id: str) -> None:
+        self.running_nodes.discard(node_id)
+        self._release_execution_memory(node_id, self.mapping[node_id].gpu_id)
+        self._candidates.add(node_id)
+
+    def begin_execution(self, node_id: str) -> None:
+        gpu_id = self.mapping[node_id].gpu_id
+        cpu_mem, gpu_mem = self.node_resources[node_id]
+        if gpu_id is not None and gpu_mem > 0:
+            self.memory_stats["gpu_in_use"][gpu_id] += gpu_mem
+        if cpu_mem > 0 and node_id not in self._cpu_reserved_nodes:
+            self._cpu_reserved_nodes[node_id] = int(cpu_mem)
+            self.memory_stats["cpu_in_flight"] += int(cpu_mem)
 
     def move_to_running(self, node_id: str | list):
         self.ready_nodes.remove(node_id)
         if isinstance(node_id, list):
-            self.running_nodes.extend(node_id)
+            self._ready_set.difference_update(node_id)
+            self.running_nodes.update(node_id)
         else:
-            self.running_nodes.append(node_id)
+            self._ready_set.discard(node_id)
+            self.running_nodes.add(node_id)
 
     def complete_node(self, node_id: str):
-        self.running_nodes.remove(node_id)
+        self.running_nodes.discard(node_id)
         self.completed_nodes.append(node_id)
-        self._release_memory(node_id, self.mapping[node_id].gpu_id)
-        self.topo_order.remove(node_id)
+        self._completed_set.add(node_id)
+        self._release_execution_memory(node_id, self.mapping[node_id].gpu_id)
         for child_id in self.children[node_id]:
             self.parent_refcounts[child_id] -= 1
             self.unresolved_parents[child_id] -= 1
+            if (
+                self.unresolved_parents[child_id] == 0
+                and child_id not in self.leaves
+                and child_id not in self._completed_set
+            ):
+                self._candidates.add(child_id)
 
         for parent_id in self.parents.get(node_id, set()):
             if self.remaining_children.get(parent_id, 0) > 0:
@@ -209,9 +274,9 @@ class MemoryAwareNodeScheduler:
         for desc_id in descendants:
             if (
                 desc_id in self.leaves
-                or desc_id in self.ready_nodes
+                or desc_id in self._ready_set
                 or desc_id in self.running_nodes
-                or desc_id in self.completed_nodes
+                or desc_id in self._completed_set
             ):
                 continue
 
@@ -219,9 +284,10 @@ class MemoryAwareNodeScheduler:
             if not parent_ids:
                 continue
 
-            input_stats = self.node_stats.get(parent_ids[0])
-            if input_stats is None:
+            parent_stats = [self.node_stats.get(pid) for pid in parent_ids]
+            if any(s is None for s in parent_stats):
                 continue
+            input_stats = parent_stats[0] if len(parent_stats) == 1 else parent_stats
 
             if desc_id not in self.roots:
                 operation = self.mapping[desc_id].operation(
@@ -232,7 +298,9 @@ class MemoryAwareNodeScheduler:
                 peak_memory["cpu_peak_bytes"] += (
                     64 * 1024 + 512 * input_stats_for_overhead.num_instances
                 )
-                output_stats = operation.get_output_stats(input_stats)
+                output_stats = self._resolve_output_stats(
+                    operation.get_output_stats(input_stats), input_stats
+                )
 
                 self.node_resources[desc_id] = (
                     int(peak_memory["cpu_peak_bytes"]),
@@ -288,29 +356,65 @@ class MemoryAwareNodeScheduler:
         return blocked
 
     def not_enough_memory(self) -> bool:
-        for node_id in self._get_pending_nodes():
+        if self.running_nodes or self.ready_nodes:
+            return False
+        for node_id in self._candidates:
             cpu_mem, gpu_mem = self.node_resources[node_id]
-            if cpu_mem > self.memory_budget["cpu"] - self.memory_stats["cpu_in_use"]:
+            if cpu_mem > self.memory_budget["cpu"] - self._total_cpu_in_use():
+                self.deadlock_reason = (
+                    f"node {node_id} needs {cpu_mem / 1024**3:.2f} GB CPU but only "
+                    f"{(self.memory_budget['cpu'] - self._total_cpu_in_use()) / 1024**3:.2f} "
+                    f"GB is free and nothing is running to release more"
+                )
                 return True
             if gpu_mem > 0.0 and self.n_gpu > 0:
                 gpu_id = self._gpu_with_most_free_memory(gpu_mem)
                 if gpu_id is None:
+                    if (
+                        self.gpu_wait_attempts.get(node_id, 0)
+                        <= _MAX_GPU_SCHEDULE_ATTEMPTS
+                    ):
+                        continue
+                    self.deadlock_reason = (
+                        f"node {node_id} needs {gpu_mem / 1024**3:.2f} GB GPU memory "
+                        f"but no GPU has enough free and nothing is running to release more"
+                    )
                     return True
-        return self.memory_stats["cpu_in_use"] > self.memory_budget["cpu"]
+        return False
 
-    def _check_memory_constraints(self, node_id: str) -> bool:
+    def _check_memory_constraints(self, node_id: str, pending_bytes: int = 0) -> bool:
         cpu_mem, gpu_mem = self.node_resources[node_id]
         gpu_id = None
-        if cpu_mem > self.memory_budget["cpu"] - self.memory_stats["cpu_in_use"]:
+        if (
+            cpu_mem
+            > self.memory_budget["cpu"] - self._total_cpu_in_use() - pending_bytes
+        ):
             if cpu_mem > self.memory_budget["cpu"]:
                 self.blocked_memory_nodes_perm.append(node_id)
-                self.topo_order.remove(node_id)
+                self.blocked_memory_reasons[node_id] = (
+                    f"estimated CPU peak {cpu_mem / 1024**3:.2f} GB exceeds the "
+                    f"total CPU memory budget of "
+                    f"{self.memory_budget['cpu'] / 1024**3:.2f} GB"
+                )
+                self._candidates.discard(node_id)
             return False, None
 
         if gpu_mem > 0.0 and self.n_gpu > 0:
             gpu_id = self._gpu_with_most_free_memory(gpu_mem)
 
             if gpu_id is None:
+                attempts = self.gpu_wait_attempts.get(node_id, 0) + 1
+                self.gpu_wait_attempts[node_id] = attempts
+                if attempts > _MAX_GPU_SCHEDULE_ATTEMPTS:
+                    reason = (
+                        f"no GPU had {gpu_mem / 1024**3:.2f} GB free after "
+                        f"{attempts} scheduling attempts; running on CPU instead"
+                    )
+                    if DEBUG:
+                        print(f"Node {node_id}: {reason}")
+                    self.cpu_fallback_nodes.append(node_id)
+                    self.cpu_fallback_reasons[node_id] = reason
+                    return True, None
                 if DEBUG:
                     print(f"Node {node_id} has no available GPU")
                 return False, None
@@ -330,23 +434,17 @@ class MemoryAwareNodeScheduler:
         return free_memory.index(max(free_memory))
 
     def _get_pending_nodes(self) -> List[str]:
-        return [
-            node_id
-            for node_id in self.topo_order
-            if node_id not in self.leaves and self.unresolved_parents[node_id] == 0
-        ]
+        return list(self._candidates)
 
-    def _reserve_memory(self, node_id: str, gpu_id: int) -> bool:
-        cpu_mem, gpu_mem = self.node_resources[node_id]
-        self.memory_stats["cpu_in_use"] += cpu_mem
-        if gpu_id is not None:
-            self.memory_stats["gpu_in_use"][gpu_id] += gpu_mem
-
-    def _release_memory(self, node_id: str, gpu_id: int) -> bool:
-        cpu_mem, gpu_mem = self.node_resources[node_id]
-        self.memory_stats["cpu_in_use"] -= cpu_mem
-        if gpu_id is not None:
+    def _release_execution_memory(self, node_id: str, gpu_id: int) -> None:
+        _, gpu_mem = self.node_resources[node_id]
+        if gpu_id is not None and gpu_mem > 0:
             self.memory_stats["gpu_in_use"][gpu_id] -= gpu_mem
+        reserved = self._cpu_reserved_nodes.pop(node_id, 0)
+        if reserved:
+            self.memory_stats["cpu_in_flight"] = max(
+                0, self.memory_stats["cpu_in_flight"] - reserved
+            )
 
     def _get_nodes_from_dags(
         self, dags: List[RepresentationDag]
@@ -430,7 +528,9 @@ class MemoryAwareNodeScheduler:
                         64 * 1024 + 512 * input_stats_for_overhead.num_instances
                     )  # Placeholder for transformed modality creation overhead
                     peak_memory["cpu_peak_bytes"] *= 1
-                    output_stats = operation.get_output_stats(input_stats)
+                    output_stats = self._resolve_output_stats(
+                        operation.get_output_stats(input_stats), input_stats
+                    )
                     node_resources[node] = (
                         int(peak_memory["cpu_peak_bytes"]),
                         int(peak_memory["gpu_peak_bytes"]),
@@ -461,9 +561,11 @@ class MemoryAwareNodeScheduler:
         return input_stats
 
     @staticmethod
-    def _stats_to_bytes(stats: Optional[Any], dtype_size: int = 4) -> int:
+    def _stats_to_bytes(stats: Optional[Any], dtype_size: Optional[int] = None) -> int:
         if stats is None:
             return 0
+        if dtype_size is None:
+            dtype_size = stats_itemsize(stats)
         num_instances = int(getattr(stats, "num_instances", 0))
         output_shape = tuple(getattr(stats, "output_shape", ()))
         numel = 1
@@ -473,3 +575,21 @@ class MemoryAwareNodeScheduler:
             except Exception:
                 numel *= 1
         return max(0, int(num_instances * numel * dtype_size))
+
+    @staticmethod
+    def _resolve_output_stats(output_stats: Any, input_stats: Any) -> Any:
+        if output_stats is None or getattr(output_stats, "dtype", None) is not None:
+            return output_stats
+
+        sources = input_stats if isinstance(input_stats, list) else [input_stats]
+        sources = [s for s in sources if s is not None]
+        sources = [s for s in sources if stats_itemsize(s) > 0]
+        if not sources:
+            return output_stats
+
+        widest = max(sources, key=lambda s: stats_itemsize(s))
+        try:
+            output_stats.dtype = stats_dtype(widest)
+        except AttributeError:
+            pass
+        return output_stats

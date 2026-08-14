@@ -222,7 +222,9 @@ class ModalityRandomDataGenerator:
         data = [
             [
                 random.random()
-                for _ in range(random.randint(max_audio_length * 0.9, max_audio_length))
+                for _ in range(
+                    random.randint(int(max_audio_length * 0.9), max_audio_length)
+                )
             ]
             for _ in range(num_instances)
         ]
