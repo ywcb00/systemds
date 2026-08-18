@@ -22,6 +22,7 @@ package org.apache.sysds.runtime.controlprogram.federated;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.Serializable;
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -32,6 +33,7 @@ import java.util.Set;
 import java.util.concurrent.Future;
 
 import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -268,7 +270,7 @@ public class FederatedData {
 				cp.addLast(new FederatedFormatDecoder());
 				compressionStrategy.ifPresent(strategy -> cp.addLast(strategy.right));
 				cp.addLast(new ChunkedWriteHandler());
-				cp.addLast(new ObjectEncoder());
+				cp.addLast(new FederatedRequestEncoder());
 				cp.addLast(new FederatedFormatEncoder());
 				cp.addLast(handler);
 			}
@@ -382,6 +384,32 @@ public class FederatedData {
 		sb.append(" " + _address.toString());
 		sb.append(":" + _filepath);
 		return sb.toString();
+	}
+
+	public static class FederatedRequestEncoder extends ObjectEncoder {
+		@Override
+		protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, Serializable msg, boolean preferDirect)
+			throws Exception {
+			int initCapacity = 256; // default initial capacity
+			if(msg instanceof FederatedRequest[]) {
+				initCapacity = 0;
+				try {
+					for(FederatedRequest fr : (FederatedRequest[]) msg) {
+						int frSize = Math.toIntExact(fr.estimateSerializationBufferSize());
+						if(Integer.MAX_VALUE - initCapacity < frSize) // summed sizes exceed integer limits
+							throw new ArithmeticException("Overflow.");
+						initCapacity += frSize;
+					}
+				}
+				catch(ArithmeticException ae) { // size of federated request exceeds integer limits
+					initCapacity = Integer.MAX_VALUE;
+				}
+			}
+			if(preferDirect)
+				return ctx.alloc().ioBuffer(initCapacity);
+			else
+				return ctx.alloc().heapBuffer(initCapacity);
+		}
 	}
 
 	/**

@@ -32,9 +32,9 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-@Ignore("heavy: client+worker share one JVM, so it holds two ~2GB matrix copies. Needs a ~9GB fork "
-	+ "heap; -DargLine is ignored here (pom uses @{argLine}), so bump the pom 'argLine' property "
-	+ "(e.g. -Xmx9g) to run manually. Verified green: 2.158GB streamed end-to-end past the 2GB Netty cap.")
+@Ignore("Heavy test: Transfer a matrix of size greater than 2GB over network. "
+	+ "This test needs ~9GB heap, since client and worker share one JVM; to run "
+	+ "this test, set the 'argLine' property inside the pom to '-Xmx9g'.")
 public class FederatedMaxPayloadTest extends AutomatedTestBase {
 
 	private final static String TEST_NAME = "FederatedMaxPayloadTest";

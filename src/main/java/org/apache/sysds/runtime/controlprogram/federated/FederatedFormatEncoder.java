@@ -19,6 +19,7 @@
 
 package org.apache.sysds.runtime.controlprogram.federated;
 
+import java.io.IOException;
 import java.io.Serializable;
 
 import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
@@ -43,10 +44,9 @@ public class FederatedFormatEncoder extends ChannelOutboundHandlerAdapter {
 	}
 
 	@Override
-	public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+	public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws IOException {
 		if(!(msg instanceof Serializable)) {
-			ctx.write(msg, promise);
-			return;
+			throw new IOException("Network message must be serializable.");
 		}
 		if(useObjectEncoder(msg)) {
 			ctx.write(markerBuffer(ctx, FederatedChunkProtocol.MARKER_OBJECT_ENCODER), ctx.voidPromise());
@@ -66,11 +66,11 @@ public class FederatedFormatEncoder extends ChannelOutboundHandlerAdapter {
 	 * @return true if lineage reuse is enabled and the message is a reusable response below the stream threshold
 	 */
 	private boolean useObjectEncoder(Object msg) {
-		// no streaming for lineage cacheable responses: LineageCache.putSerializedObject
-		// needs one INT_MAX bounded byte[] that the chunked path never materializes
 		if(ReuseCacheType.isNone() || !(msg instanceof FederatedResponse))
 			return false;
 		FederatedResponse resp = (FederatedResponse) msg;
+		// Chunks are not supported by the lineage cache yet; use regular object encoder in this case if
+		// the response size does not exceed the upper limits of the object encoder
 		return resp.isLineageReusable() && resp.estimateSerializationBufferSize() < _streamThreshold;
 	}
 
