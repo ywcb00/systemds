@@ -39,6 +39,7 @@ import org.apache.sysds.runtime.meta.MetaDataFormat;
 import org.apache.sysds.runtime.ooc.cache.OOCCacheManager;
 import org.apache.sysds.runtime.ooc.planning.OOCAccessPattern;
 import org.apache.sysds.runtime.ooc.planning.OOCStoreLayout;
+import org.apache.sysds.runtime.ooc.primitives.GroupedReduceOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.MaterializeOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.OOCPrimitive;
 import org.apache.sysds.runtime.ooc.store.CountingLiveness;
@@ -185,6 +186,43 @@ public class OOCPrimitiveTest {
 		}
 		Assert.assertEquals(Map.of("1,1", 12.0, "2,1", 13.0, "3,1", 14.0, "1,2", 22.0, "2,2", 23.0, "3,2", 24.0),
 			values);
+	}
+
+	@Test
+	public void testGroupedReduceModes() {
+		Assert.assertEquals(Map.of("1,1", 136d, "2,1", 166d),
+			runGroupedReduce(GroupedReduceOOCPrimitive.Grouping.ROW_BLOCKS, 2, 1));
+		Assert.assertEquals(Map.of("1,1", 132d, "1,2", 134d, "1,3", 136d),
+			runGroupedReduce(GroupedReduceOOCPrimitive.Grouping.COL_BLOCKS, 1, 3));
+	}
+
+	private static Map<String, Double> runGroupedReduce(GroupedReduceOOCPrimitive.Grouping grouping, long outputRows,
+		long outputCols) {
+		SubscribableTaskQueue<IndexedMatrixValue> input = new SubscribableTaskQueue<>();
+		SubscribableTaskQueue<IndexedMatrixValue> output = new SubscribableTaskQueue<>();
+		input.setData(new MatrixObject(ValueType.FP64, "/dev/null",
+			new MetaDataFormat(new MatrixCharacteristics(2, 3, 1), FileFormat.BINARY)));
+		output.setData(new MatrixObject(ValueType.FP64, "/dev/null",
+			new MetaDataFormat(new MatrixCharacteristics(outputRows, outputCols, 1), FileFormat.BINARY)));
+		for(long[] indexes : List.of(new long[] {2, 3}, new long[] {1, 1}, new long[] {2, 1}, new long[] {1, 3},
+			new long[] {1, 2}, new long[] {2, 2}))
+			input.enqueue(new IndexedMatrixValue(new MatrixIndexes(indexes[0], indexes[1]),
+				new MatrixBlock(1, 1, indexes[0] * 10d + indexes[1])));
+		input.closeInput();
+		OOCInstructionUtils.groupedReduceIndexed(input, output, grouping, value -> (MatrixBlock) value.getValue(),
+			(left, right) -> new MatrixBlock(1, 1, left.get(0, 0) + right.get(0, 0)),
+			value -> new MatrixBlock(1, 1, value.get(0, 0) + 100), new StreamContext());
+
+		output.start();
+		Map<String, Double> values = new HashMap<>();
+		OOCStream.QueueCallback<IndexedMatrixValue> callback;
+		while((callback = output.dequeueCB()) != null)
+			try(OOCStream.QueueCallback<IndexedMatrixValue> current = callback) {
+				IndexedMatrixValue value = current.get();
+				values.put(value.getIndexes().getRowIndex() + "," + value.getIndexes().getColumnIndex(),
+					value.getValue().get(0, 0));
+			}
+		return values;
 	}
 
 	@Test

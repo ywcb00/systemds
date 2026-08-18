@@ -103,7 +103,15 @@ public final class OOCInstructionUtils {
 
 	public static void rowGroupedReduce(OOCStreamable<IndexedMatrixValue> input, OOCStream<IndexedMatrixValue> output,
 		BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> merge, StreamContext context) {
-		output.assignPrimitive(new GroupedReduceOOCPrimitive(input, output, merge, context));
+		groupedReduceIndexed(input, output, GroupedReduceOOCPrimitive.Grouping.ROW_BLOCKS,
+			value -> (MatrixBlock) value.getValue(), merge, Function.identity(), context);
+	}
+
+	public static void groupedReduceIndexed(OOCStreamable<IndexedMatrixValue> input,
+		OOCStream<IndexedMatrixValue> output, GroupedReduceOOCPrimitive.Grouping grouping,
+		Function<IndexedMatrixValue, MatrixBlock> partial, BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> merge,
+		Function<MatrixBlock, MatrixBlock> finish, StreamContext context) {
+		output.assignPrimitive(new GroupedReduceOOCPrimitive(input, output, grouping, partial, merge, finish, context));
 	}
 
 	public static int getComputeInFlight() {

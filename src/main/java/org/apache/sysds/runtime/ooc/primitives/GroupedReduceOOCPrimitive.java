@@ -22,6 +22,7 @@ package org.apache.sysds.runtime.ooc.primitives;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.ooc.CachingStream;
@@ -45,9 +46,16 @@ import org.apache.sysds.runtime.ooc.util.OOCInstructionUtils;
 import org.apache.sysds.runtime.ooc.util.OOCUtils;
 
 public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
+	public enum Grouping {
+		ROW_BLOCKS, COL_BLOCKS
+	}
+
 	private final OOCStreamable<IndexedMatrixValue> _input;
 	private final OOCStreamable<IndexedMatrixValue> _output;
+	private final Grouping _grouping;
+	private final Function<IndexedMatrixValue, MatrixBlock> _partial;
 	private final BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> _merge;
+	private final Function<MatrixBlock, MatrixBlock> _finish;
 	private final AtomicBoolean _cleaned;
 	private final AtomicBoolean _sourceComplete;
 	private final AtomicInteger _active;
@@ -60,10 +68,21 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 
 	public GroupedReduceOOCPrimitive(OOCStreamable<IndexedMatrixValue> input, OOCStreamable<IndexedMatrixValue> output,
 		BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> merge, StreamContext context) {
+		this(input, output, Grouping.ROW_BLOCKS, value -> (MatrixBlock) value.getValue(), merge, Function.identity(),
+			context);
+	}
+
+	public GroupedReduceOOCPrimitive(OOCStreamable<IndexedMatrixValue> input, OOCStreamable<IndexedMatrixValue> output,
+		Grouping grouping, Function<IndexedMatrixValue, MatrixBlock> partial,
+		BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> merge, Function<MatrixBlock, MatrixBlock> finish,
+		StreamContext context) {
 		super(context, input);
 		_input = input;
 		_output = output;
+		_grouping = grouping;
+		_partial = partial;
 		_merge = merge;
+		_finish = finish;
 		_cleaned = new AtomicBoolean();
 		_sourceComplete = new AtomicBoolean();
 		_active = new AtomicInteger(1);
@@ -72,17 +91,21 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 
 	@Override
 	protected void inferPatternsInternal() {
-		_pattern = OOCAccessPattern.ROW_MAJOR;
+		_pattern = groupingPattern();
 		for(OOCPrimitive child : getChildren())
-			child.requestPattern(OOCAccessPattern.ROW_MAJOR);
+			child.requestPattern(_pattern);
 		inferParentPatterns();
 	}
 
 	@Override
 	protected void requestPatternInternal(OOCAccessPattern accessPattern) {
-		_pattern = OOCAccessPattern.ROW_MAJOR;
+		_pattern = groupingPattern();
 		for(OOCPrimitive child : getChildren())
-			child.requestPattern(OOCAccessPattern.ROW_MAJOR);
+			child.requestPattern(_pattern);
+	}
+
+	private OOCAccessPattern groupingPattern() {
+		return _grouping == Grouping.COL_BLOCKS ? OOCAccessPattern.COL_MAJOR : OOCAccessPattern.ROW_MAJOR;
 	}
 
 	@Override
@@ -91,8 +114,7 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 		if(inputDc == null || !inputDc.dimsKnown() || inputDc.getBlocksize() <= 0)
 			throw new DMLRuntimeException("Grouped OOC reduction requires known input dimensions and block size.");
 		OOCStream<IndexedMatrixValue> input = getInputReadStream(0);
-		_numGroups = Math.toIntExact(inputDc.getNumRowBlocks());
-		_groupSize = Math.toIntExact(inputDc.getNumColBlocks());
+		configureGroups(inputDc);
 		_outputStream = _output.getWriteStream();
 		_ready = new SubscribableTaskQueue<>();
 		getContext().addInStream(input).addOutStream(_outputStream, _ready);
@@ -121,6 +143,25 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 		admitted.setSubscriber(this::accept);
 	}
 
+	private void configureGroups(DataCharacteristics inputDc) {
+		long rowBlocks = inputDc.getNumRowBlocks();
+		long colBlocks = inputDc.getNumColBlocks();
+		switch(_grouping) {
+			case ROW_BLOCKS:
+				_numGroups = Math.toIntExact(rowBlocks);
+				_groupSize = Math.toIntExact(colBlocks);
+				break;
+			case COL_BLOCKS:
+				_numGroups = Math.toIntExact(colBlocks);
+				_groupSize = Math.toIntExact(rowBlocks);
+				break;
+			default:
+				throw new IllegalStateException("Unsupported grouped-reduce grouping: " + _grouping);
+		}
+		if(_numGroups <= 0 || _groupSize <= 0)
+			throw new DMLRuntimeException("Grouped OOC reduction requires non-empty input block geometry.");
+	}
+
 	private void accept(OOCStream.QueueCallback<IndexedMatrixValue> callback) {
 		if(callback.isEos() || callback.isFailure()) {
 			try(callback) {
@@ -140,11 +181,11 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 		try(callback) {
 			budget = AllocatedOOCStream.detachBudget(callback).enableReuse();
 			IndexedMatrixValue input = callback.get();
-			int group = Math.toIntExact(input.getIndexes().getRowIndex() - 1);
-			if(group < 0 || group >= _numGroups)
-				throw new DMLRuntimeException("Invalid grouped-reduce row block: " + (group + 1));
-			IndexedMatrixValue value = new IndexedMatrixValue(new MatrixIndexes(group + 1L, 1), input.getValue());
-			payload = payload(value, budget);
+			int group = group(input.getIndexes());
+			MatrixBlock partial = _partial.apply(input);
+			if(partial == null)
+				throw new DMLRuntimeException("Grouped OOC reduction produced a null partial block.");
+			payload = payload(partialValue(group, 1, partial), budget);
 			reduce(group, payload, budget);
 			payload = null;
 			budget = null;
@@ -211,9 +252,11 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 			IndexedMatrixValue right = work._incoming.value();
 			int count = Math.addExact(multiplicity(left), multiplicity(right));
 			if(count > _groupSize)
-				throw new DMLRuntimeException("Too many partial tiles for grouped-reduce row " + (work._group + 1));
+				throw new DMLRuntimeException("Too many partial tiles for grouped-reduce group " + (work._group + 1));
 			MatrixBlock value = _merge.apply((MatrixBlock) left.getValue(), (MatrixBlock) right.getValue());
-			merged = payload(new IndexedMatrixValue(new MatrixIndexes(work._group + 1L, count), value), budget);
+			if(value == null)
+				throw new DMLRuntimeException("Grouped OOC reduction produced a null merged block.");
+			merged = payload(partialValue(work._group, count, value), budget);
 			work.releaseIncoming();
 			released = work.closeExistingAsync();
 		}
@@ -240,14 +283,18 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 	}
 
 	private void finalizeGroup(int group, ManagedPayload<IndexedMatrixValue> payload, ReservationBudget budget) {
-		IndexedMatrixValue accumulated = payload.value();
-		IndexedMatrixValue output = new IndexedMatrixValue(new MatrixIndexes(group + 1L, 1), accumulated.getValue());
-		payload.release();
 		try {
-			OOCUtils.enqueueExact(_outputStream, output, budget);
+			MatrixBlock outputBlock = _finish.apply((MatrixBlock) payload.value().getValue());
+			if(outputBlock == null)
+				throw new DMLRuntimeException("Grouped OOC reduction produced a null final block.");
+			payload.release();
+			payload = null;
+			OOCUtils.enqueueExact(_outputStream, new IndexedMatrixValue(outputIndexes(group), outputBlock), budget);
 			_finalizedGroups.incrementAndGet();
 		}
 		catch(Throwable failure) {
+			if(payload != null)
+				payload.release();
 			budget.close();
 			fail(failure);
 		}
@@ -260,8 +307,34 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 		return new ManagedPayload<>(value, bytes, budget);
 	}
 
-	private static int multiplicity(IndexedMatrixValue value) {
-		return Math.toIntExact(value.getIndexes().getColumnIndex());
+	private int group(MatrixIndexes indexes) {
+		long group = switch(_grouping) {
+			case ROW_BLOCKS -> indexes.getRowIndex() - 1;
+			case COL_BLOCKS -> indexes.getColumnIndex() - 1;
+		};
+		if(group < 0 || group >= _numGroups)
+			throw new DMLRuntimeException("Invalid grouped-reduce group index: " + group);
+		return Math.toIntExact(group);
+	}
+
+	private IndexedMatrixValue partialValue(int group, int count, MatrixBlock value) {
+		MatrixIndexes indexes = switch(_grouping) {
+			case ROW_BLOCKS -> new MatrixIndexes(group + 1L, count);
+			case COL_BLOCKS -> new MatrixIndexes(count, group + 1L);
+		};
+		return new IndexedMatrixValue(indexes, value);
+	}
+
+	private int multiplicity(IndexedMatrixValue value) {
+		return Math.toIntExact(
+			_grouping == Grouping.COL_BLOCKS ? value.getIndexes().getRowIndex() : value.getIndexes().getColumnIndex());
+	}
+
+	private MatrixIndexes outputIndexes(int group) {
+		return switch(_grouping) {
+			case ROW_BLOCKS -> new MatrixIndexes(group + 1L, 1);
+			case COL_BLOCKS -> new MatrixIndexes(1, group + 1L);
+		};
 	}
 
 	private void finishSource() {
@@ -275,7 +348,7 @@ public final class GroupedReduceOOCPrimitive extends OOCPrimitive {
 			return;
 		if(!hasFailed() && _finalizedGroups.get() != _numGroups)
 			fail(new DMLRuntimeException(
-				"Grouped reduction completed " + _finalizedGroups.get() + " of " + _numGroups + " row groups."));
+				"Grouped reduction completed " + _finalizedGroups.get() + " of " + _numGroups + " groups."));
 		try {
 			_ready.closeInput();
 		}

@@ -341,7 +341,7 @@ public class OOCCacheImpl implements OOCCache {
 				readFuture = null;
 			}
 			else if(meta.readFuture == null) {
-				meta.entry.setState(BlockState.READING);
+				awaitRead(meta);
 				OOCFuture<BlockEntry> scheduled = _ioHandler.scheduleRead(meta.entry);
 				meta.readFuture = scheduled;
 				readFuture = scheduled;
@@ -354,8 +354,10 @@ public class OOCCacheImpl implements OOCCache {
 					}
 				});
 			}
-			else
+			else {
+				awaitRead(meta);
 				readFuture = meta.readFuture;
+			}
 		}
 		if(releaseReserved) {
 			allowance.release(reservedBytes);
@@ -372,19 +374,24 @@ public class OOCCacheImpl implements OOCCache {
 			try {
 				if(ex != null) {
 					release = true;
+					synchronized(OOCCacheImpl.this) {
+						finishRead(meta);
+					}
 					allowance.release(reservedBytes);
 					result.completeExceptionally(ex);
 					return;
 				}
 				BlockEntry pinned;
 				synchronized(OOCCacheImpl.this) {
-					if(getMeta(meta.entry) != meta || meta.entry.getDataUnsafe() == null) {
+					if(getMeta(meta.entry) != meta) {
 						release = true;
-						if(meta.entry.getState() == BlockState.READING)
-							meta.entry.setState(BlockState.COLD);
 						pinned = null;
 					}
 					else {
+						finishRead(meta);
+						if(meta.entry.getDataUnsafe() == null)
+							throw new IllegalStateException(
+								"Backing read left no data for entry: " + meta.entry.getKey());
 						completion = pinResident(meta);
 						Statistics.incrementOOCEvictionGet();
 						pinned = meta.entry;
@@ -402,6 +409,18 @@ public class OOCCacheImpl implements OOCCache {
 			}
 		});
 		return result;
+	}
+
+	private void awaitRead(EntryMeta meta) {
+		meta.readWaiters++;
+		clearLive(meta.entry);
+		meta.entry.setState(BlockState.READING);
+	}
+
+	private void finishRead(EntryMeta meta) {
+		meta.readWaiters = Math.max(0, meta.readWaiters - 1);
+		if(meta.readWaiters == 0 && meta.entry.getState() == BlockState.READING)
+			meta.entry.setState(BlockState.COLD);
 	}
 
 	private DeferredCompletion pinResident(EntryMeta meta) {
@@ -624,7 +643,8 @@ public class OOCCacheImpl implements OOCCache {
 	}
 
 	private void removeIfUnused(EntryMeta meta) {
-		if(meta.entry.getReferenceCount() > 0 || meta.entry.getPinCount() > 0 || meta.deferredUnpin != null)
+		if(meta.entry.getReferenceCount() > 0 || meta.entry.getPinCount() > 0 || meta.deferredUnpin != null ||
+			meta.readWaiters > 0)
 			return;
 		BlockEntry entry = meta.entry;
 		if(isCacheOwned(entry))
@@ -705,6 +725,7 @@ public class OOCCacheImpl implements OOCCache {
 		private final BlockEntry entry;
 		private boolean backed;
 		private OOCFuture<BlockEntry> readFuture;
+		private int readWaiters;
 		private CacheUnpinHandle deferredUnpin;
 
 		private EntryMeta(BlockEntry entry) {
