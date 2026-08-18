@@ -31,6 +31,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
+import java.util.function.ToLongFunction;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.runtime.DMLRuntimeException;
@@ -47,6 +48,7 @@ import org.apache.sysds.runtime.ooc.primitives.GroupedReduceOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.JoinOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.MappingOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.PlannableDataGenOOCPrimitive;
+import org.apache.sysds.runtime.ooc.primitives.ReduceOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.TransposeOOCPrimitive;
 import org.apache.sysds.runtime.ooc.stats.OOCEventLog;
 import org.apache.sysds.runtime.ooc.store.MaterializedStore;
@@ -112,6 +114,11 @@ public final class OOCInstructionUtils {
 		Function<IndexedMatrixValue, MatrixBlock> partial, BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> merge,
 		Function<MatrixBlock, MatrixBlock> finish, StreamContext context) {
 		output.assignPrimitive(new GroupedReduceOOCPrimitive(input, output, grouping, partial, merge, finish, context));
+	}
+
+	public static <I, O> void reduce(OOCStreamable<I> input, OOCStream<O> output, Function<I, O> partial,
+		BiFunction<O, O, O> merge, ToLongFunction<O> size, StreamContext context) {
+		output.assignPrimitive(new ReduceOOCPrimitive<>(input, output, partial, merge, size, context));
 	}
 
 	public static int getComputeInFlight() {

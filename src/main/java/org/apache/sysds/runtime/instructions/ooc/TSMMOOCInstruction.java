@@ -28,7 +28,6 @@ import org.apache.sysds.lops.MMTSJ.MMTSJType;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysds.runtime.controlprogram.parfor.LocalTaskQueue;
 import org.apache.sysds.runtime.functionobjects.Multiply;
 import org.apache.sysds.runtime.functionobjects.Plus;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
@@ -41,6 +40,7 @@ import org.apache.sysds.runtime.matrix.operators.AggregateBinaryOperator;
 import org.apache.sysds.runtime.matrix.operators.AggregateOperator;
 import org.apache.sysds.runtime.matrix.operators.BinaryOperator;
 import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.runtime.ooc.util.OOCInstructionUtils;
 
 public class TSMMOOCInstruction extends ComputationOOCInstruction {
 	private final MMTSJType _type;
@@ -109,24 +109,15 @@ public class TSMMOOCInstruction extends ComputationOOCInstruction {
 	}
 
 	private void processSingleOutputTileInstruction(ExecutionContext ec, MatrixObject min) {
-		OOCStream<IndexedMatrixValue> qIn = min.getStreamHandle();
+		OOCStream<IndexedMatrixValue> out = createWritableStream();
+		ec.getMatrixObject(output).setStreamHandle(out);
 		BinaryOperator plus = InstructionUtils.parseBinaryOperator(Opcodes.PLUS.toString());
-		MatrixBlock resultBlock = null;
-
-		OOCStream<MatrixBlock> tmpStream = createWritableStream();
-		mapOOC(qIn, tmpStream,
-			tmp -> ((MatrixBlock) tmp.getValue())
-				.transposeSelfMatrixMultOperations(new MatrixBlock(), _type));
-
-		MatrixBlock tmp;
-		while((tmp = tmpStream.dequeue()) != LocalTaskQueue.NO_MORE_TASKS) {
-			if(resultBlock == null)
-				resultBlock = tmp;
-			else
-				resultBlock.binaryOperationsInPlace(plus, tmp);
-		}
-
-		ec.setMatrixOutput(output.getName(), resultBlock);
+		OOCInstructionUtils.reduce(min.getStreamable(), out,
+			value -> new IndexedMatrixValue(new MatrixIndexes(1, 1),
+				((MatrixBlock) value.getValue()).transposeSelfMatrixMultOperations(new MatrixBlock(), _type)),
+			(left, right) -> new IndexedMatrixValue(new MatrixIndexes(1, 1),
+				((MatrixBlock) left.getValue()).binaryOperationsInPlace(plus, right.getValue())),
+			value -> ((MatrixBlock) value.getValue()).getExactSerializedSize(), getContext());
 	}
 
 	private long getJoinIndex(IndexedMatrixValue value) {

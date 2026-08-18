@@ -84,7 +84,7 @@ public class StateTableUtilsTest {
 
 		_producer.reserveBlocking(TILE_BYTES);
 		StateTableUtils.Match referenced = StateTableUtils
-			.putOrTake(_table, 0, new InMemoryQueueCallback(tile(2.0), null, _producer, TILE_BYTES), _reader)
+			.putOrTake(_table, 0, new InMemoryQueueCallback<>(tile(2.0), null, _producer, TILE_BYTES), _reader)
 			.get(WAIT_SECONDS, TimeUnit.SECONDS);
 		Assert.assertNotNull(referenced);
 		try(OOCStream.QueueCallback<IndexedMatrixValue> left = referenced.left();
@@ -95,7 +95,7 @@ public class StateTableUtilsTest {
 
 		_producer.reserveBlocking(TILE_BYTES);
 		Assert.assertNull(StateTableUtils
-			.putOrTake(_table, 1, new InMemoryQueueCallback(tile(3.0), null, _producer, TILE_BYTES), _reader)
+			.putOrTake(_table, 1, new InMemoryQueueCallback<>(tile(3.0), null, _producer, TILE_BYTES), _reader)
 			.get(WAIT_SECONDS, TimeUnit.SECONDS));
 		StateTableUtils.Match copied = StateTableUtils
 			.putOrTake(_table, 1, new OOCStream.SimpleQueueCallback<>(tile(4.0), null), _reader)

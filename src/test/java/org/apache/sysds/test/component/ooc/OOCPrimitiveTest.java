@@ -189,6 +189,30 @@ public class OOCPrimitiveTest {
 	}
 
 	@Test
+	public void testReduce() {
+		SubscribableTaskQueue<IndexedMatrixValue> input = new SubscribableTaskQueue<>();
+		SubscribableTaskQueue<MatrixBlock> output = new SubscribableTaskQueue<>();
+		input.setData(new MatrixObject(ValueType.FP64, "/dev/null",
+			new MetaDataFormat(new MatrixCharacteristics(2, 3, 1), FileFormat.BINARY)));
+		output.setData(new MatrixObject(ValueType.FP64, "/dev/null",
+			new MetaDataFormat(new MatrixCharacteristics(1, 1, 1), FileFormat.BINARY)));
+		for(long[] indexes : List.of(new long[] {2, 3}, new long[] {1, 1}, new long[] {2, 1}, new long[] {1, 3},
+			new long[] {1, 2}, new long[] {2, 2}))
+			input.enqueue(new IndexedMatrixValue(new MatrixIndexes(indexes[0], indexes[1]),
+				new MatrixBlock(1, 1, indexes[0] * 10d + indexes[1])));
+		input.closeInput();
+		OOCInstructionUtils.reduce(input, output, value -> new MatrixBlock(1, 1, 2 * value.getValue().get(0, 0)),
+			(left, right) -> new MatrixBlock(1, 1, left.get(0, 0) + right.get(0, 0)),
+			MatrixBlock::getExactSerializedSize, new StreamContext());
+
+		output.start();
+		try(OOCStream.QueueCallback<MatrixBlock> callback = output.dequeueCB()) {
+			Assert.assertEquals(204, callback.get().get(0, 0), 0);
+		}
+		Assert.assertNull(output.dequeueCB());
+	}
+
+	@Test
 	public void testGroupedReduceModes() {
 		Assert.assertEquals(Map.of("1,1", 136d, "2,1", 166d),
 			runGroupedReduce(GroupedReduceOOCPrimitive.Grouping.ROW_BLOCKS, 2, 1));

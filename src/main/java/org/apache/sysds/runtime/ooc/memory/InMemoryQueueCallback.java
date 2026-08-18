@@ -21,36 +21,38 @@ package org.apache.sysds.runtime.ooc.memory;
 
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.ooc.OOCStream;
-import org.apache.sysds.runtime.instructions.spark.data.IndexedMatrixValue;
-
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class InMemoryQueueCallback implements OOCStream.QueueCallback<IndexedMatrixValue> {
-	private CallbackHandle _handle;
+public class InMemoryQueueCallback<T> implements OOCStream.QueueCallback<T> {
+	private CallbackHandle<T> _handle;
 	private boolean _closed;
 
-	public InMemoryQueueCallback(IndexedMatrixValue result, DMLRuntimeException failure, MemoryAllowance allow,
-		long reservedBytes) {
-		_handle = new CallbackHandle(result, failure, allow, reservedBytes);
+	public InMemoryQueueCallback(T result, DMLRuntimeException failure, MemoryAllowance allow, long reservedBytes) {
+		_handle = new CallbackHandle<>(result, failure, allow, reservedBytes);
 		_closed = false;
 	}
 
-	private InMemoryQueueCallback(CallbackHandle handle) {
+	public InMemoryQueueCallback(ManagedPayload<T> payload) {
+		this(payload.value(), null, payload.owner(), payload.bytes());
+		payload.transfer();
+	}
+
+	private InMemoryQueueCallback(CallbackHandle<T> handle) {
 		_handle = handle;
 		_closed = false;
 	}
 
 	@Override
-	public IndexedMatrixValue get() {
+	public T get() {
 		return _handle.get();
 	}
 
 	@Override
-	public synchronized OOCStream.QueueCallback<IndexedMatrixValue> keepOpen() {
+	public synchronized InMemoryQueueCallback<T> keepOpen() {
 		if(_closed)
 			throw new IllegalStateException("Cannot keep open a closed callback");
 		_handle._refCtr.incrementAndGet();
-		return new InMemoryQueueCallback(_handle);
+		return new InMemoryQueueCallback<>(_handle);
 	}
 
 	@Override
@@ -126,20 +128,19 @@ public class InMemoryQueueCallback implements OOCStream.QueueCallback<IndexedMat
 		return _handle._failure != null;
 	}
 
-	CallbackHandle getHandle() {
+	CallbackHandle<T> getHandle() {
 		return _handle;
 	}
 
-	static final class CallbackHandle {
-		private volatile IndexedMatrixValue _result;
+	static final class CallbackHandle<T> {
+		private volatile T _result;
 		private final AtomicInteger _refCtr;
 		private MemoryAllowance _allow;
 		private long _reservedBytes;
 		private volatile DMLRuntimeException _failure;
 		private int _cacheIdx;
 
-		private CallbackHandle(IndexedMatrixValue result, DMLRuntimeException failure, MemoryAllowance allow,
-			long reservedBytes) {
+		private CallbackHandle(T result, DMLRuntimeException failure, MemoryAllowance allow, long reservedBytes) {
 			_result = result;
 			_failure = failure;
 			_refCtr = new AtomicInteger(1);
@@ -148,7 +149,7 @@ public class InMemoryQueueCallback implements OOCStream.QueueCallback<IndexedMat
 			_cacheIdx = -1;
 		}
 
-		private IndexedMatrixValue get() {
+		private T get() {
 			if(_failure != null)
 				throw _failure;
 			return _result;
@@ -174,8 +175,8 @@ public class InMemoryQueueCallback implements OOCStream.QueueCallback<IndexedMat
 			return _refCtr.get() == 1;
 		}
 
-		private synchronized IndexedMatrixValue takeManagedResultForHandover() {
-			IndexedMatrixValue result = _result;
+		private synchronized T takeManagedResultForHandover() {
+			T result = _result;
 			_result = null;
 			return result;
 		}
@@ -188,14 +189,14 @@ public class InMemoryQueueCallback implements OOCStream.QueueCallback<IndexedMat
 		}
 	}
 
-	public IndexedMatrixValue takeManagedResultForHandover() {
+	public T takeManagedResultForHandover() {
 		return _handle.takeManagedResultForHandover();
 	}
 
-	public synchronized ManagedPayload<IndexedMatrixValue> extractManagedPayload() {
+	public synchronized ManagedPayload<T> extractManagedPayload() {
 		if(_closed)
 			throw new IllegalStateException("Cannot extract a managed payload from a closed callback.");
-		CallbackHandle handle = _handle;
+		CallbackHandle<T> handle = _handle;
 		synchronized(handle) {
 			if(handle._failure != null)
 				throw handle._failure;
@@ -203,7 +204,7 @@ public class InMemoryQueueCallback implements OOCStream.QueueCallback<IndexedMat
 				throw new IllegalStateException("Cannot extract a managed payload while callback aliases exist.");
 			if(handle._cacheIdx >= 0)
 				throw new IllegalStateException("Cannot extract a managed payload from a cached-slot callback.");
-			IndexedMatrixValue result = handle._result;
+			T result = handle._result;
 			if(result == null)
 				throw new IllegalStateException("Cannot extract a managed payload from an empty callback.");
 			long bytes = handle._reservedBytes;

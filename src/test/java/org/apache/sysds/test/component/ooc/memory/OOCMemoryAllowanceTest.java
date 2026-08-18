@@ -223,7 +223,7 @@ public class OOCMemoryAllowanceTest {
 
 		OOCStream<Integer> leftStream = new SubscribableTaskQueue<>();
 		OOCStream<Integer> rightStream = new SubscribableTaskQueue<>();
-		OOCStream<InMemoryQueueCallback> outStream = new SubscribableTaskQueue<>();
+		OOCStream<InMemoryQueueCallback<IndexedMatrixValue>> outStream = new SubscribableTaskQueue<>();
 
 		long startMillis = System.currentTimeMillis();
 
@@ -248,31 +248,31 @@ public class OOCMemoryAllowanceTest {
 			rightStream.closeInput();
 		}).start();
 
-		OOCStream<InMemoryQueueCallback> leftStreamOut = new SubscribableTaskQueue<>();
-		OOCStream<InMemoryQueueCallback> leftStreamOutOut = new SubscribableTaskQueue<>();
-		OOCStream<InMemoryQueueCallback> rightStreamOut = new SubscribableTaskQueue<>();
+		OOCStream<InMemoryQueueCallback<IndexedMatrixValue>> leftStreamOut = new SubscribableTaskQueue<>();
+		OOCStream<InMemoryQueueCallback<IndexedMatrixValue>> leftStreamOutOut = new SubscribableTaskQueue<>();
+		OOCStream<InMemoryQueueCallback<IndexedMatrixValue>> rightStreamOut = new SubscribableTaskQueue<>();
 
 		test.map(leftStream, leftStreamOut, i -> {
 			var imv = new IndexedMatrixValue(new MatrixIndexes(i.longValue(), 1L), new MatrixBlock(1000, 1, 5.0));
-			return new InMemoryQueueCallback(imv, null, leftAllowance, 8 * 1000);
+			return new InMemoryQueueCallback<>(imv, null, leftAllowance, 8 * 1000);
 		});
 		test.map(leftStreamOut, leftStreamOutOut, cb -> {
 			try(cb) {
 				var imv = new IndexedMatrixValue(cb.get().getIndexes(), cb.get().getValue()
 					.scalarOperations(new RightScalarOperator(Plus.getPlusFnObject(), 2.0), new MatrixBlock()));
-				return new InMemoryQueueCallback(imv, null, leftAllowance, 8 * 1000);
+				return new InMemoryQueueCallback<>(imv, null, leftAllowance, 8 * 1000);
 			}
 		});
 		test.map(rightStream, rightStreamOut, i -> {
 			var imv = new IndexedMatrixValue(new MatrixIndexes(i.longValue(), 1L), new MatrixBlock(1000, 1, 3.0));
-			return new InMemoryQueueCallback(imv, null, rightAllowance, 8 * 1000);
+			return new InMemoryQueueCallback<>(imv, null, rightAllowance, 8 * 1000);
 		});
 
 		test.join(leftStreamOutOut, rightStreamOut, outStream, () -> joinAllowance.reserveBlocking(8 * 1000), cache,
 			(l, r) -> {
 				var imv = new IndexedMatrixValue(l.getIndexes(), ((MatrixBlock)l.getValue()).binaryOperations(new BinaryOperator(
 					Plus.getPlusFnObject()), r.getValue()));
-				return new InMemoryQueueCallback(imv, null, joinAllowance, 8 * 1000);
+				return new InMemoryQueueCallback<>(imv, null, joinAllowance, 8 * 1000);
 		});
 
 		CompletableFuture<Void> future = new CompletableFuture<>();
@@ -283,7 +283,7 @@ public class OOCMemoryAllowanceTest {
 					future.complete(null);
 					return;
 				}
-				InMemoryQueueCallback inner = cb.get();
+				InMemoryQueueCallback<IndexedMatrixValue> inner = cb.get();
 				try(cb; inner) {
 					ctr.incrementAndGet();
 					double checksum =((MatrixBlock)inner.get().getValue()).sum();
@@ -394,14 +394,15 @@ public class OOCMemoryAllowanceTest {
 			return super.joinOOC(l, r, out, joinFn, IndexedMatrixValue::getIndexes);
 		}
 
-		public CompletableFuture<Void> join(OOCStream<InMemoryQueueCallback> l, OOCStream<InMemoryQueueCallback> r,
-			OOCStream<InMemoryQueueCallback> out, Runnable memoryReserver, CachedAllowance cache,
-			BiFunction<IndexedMatrixValue, IndexedMatrixValue, InMemoryQueueCallback> joinFn) {
+		public CompletableFuture<Void> join(OOCStream<InMemoryQueueCallback<IndexedMatrixValue>> l,
+			OOCStream<InMemoryQueueCallback<IndexedMatrixValue>> r,
+			OOCStream<InMemoryQueueCallback<IndexedMatrixValue>> out, Runnable memoryReserver, CachedAllowance cache,
+			BiFunction<IndexedMatrixValue, IndexedMatrixValue, InMemoryQueueCallback<IndexedMatrixValue>> joinFn) {
 
 			OOCStream<Tuple3<OOCStream.QueueCallback<IndexedMatrixValue>, OOCStream.QueueCallback<IndexedMatrixValue>, Integer>> intermediate = createWritableStream();
 
 			new Thread(() -> {
-				InMemoryQueueCallback next;
+				InMemoryQueueCallback<IndexedMatrixValue> next;
 				IndexedMatrixValue nextValue;
 				boolean nextLeft = true;
 				AtomicInteger pendingRequests = new AtomicInteger(1);

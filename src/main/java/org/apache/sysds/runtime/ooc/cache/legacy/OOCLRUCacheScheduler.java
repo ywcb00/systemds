@@ -293,7 +293,7 @@ public class OOCLRUCacheScheduler implements OOCCacheScheduler {
 	}
 
 	@Override
-	public HandoverHandle handover(BlockKey key, InMemoryQueueCallback callback) {
+	public HandoverHandle handover(BlockKey key, InMemoryQueueCallback<IndexedMatrixValue> callback) {
 		if(!this._running)
 			throw new IllegalStateException("Cache scheduler has been shut down.");
 		PendingHandover handover = new PendingHandover(key, callback);
@@ -1085,7 +1085,7 @@ public class OOCLRUCacheScheduler implements OOCCacheScheduler {
 	}
 
 	private boolean commitHandover(PendingHandover pending) {
-		InMemoryQueueCallback callback = pending.takeForCommit();
+		InMemoryQueueCallback<IndexedMatrixValue> callback = pending.takeForCommit();
 		if(callback == null)
 			return false;
 		try {
@@ -1135,12 +1135,12 @@ public class OOCLRUCacheScheduler implements OOCCacheScheduler {
 	private static class PendingHandover implements HandoverHandle {
 		private final BlockKey _key;
 		private final CompletableFuture<Boolean> _completionFuture;
-		private InMemoryQueueCallback _callback;
+		private InMemoryQueueCallback<IndexedMatrixValue> _callback;
 		private boolean _committed;
 		private boolean _cancelled;
 		private boolean _committing;
 
-		private PendingHandover(BlockKey key, InMemoryQueueCallback callback) {
+		private PendingHandover(BlockKey key, InMemoryQueueCallback<IndexedMatrixValue> callback) {
 			_key = key;
 			_completionFuture = new CompletableFuture<>();
 			_callback = callback;
@@ -1180,11 +1180,11 @@ public class OOCLRUCacheScheduler implements OOCCacheScheduler {
 			return _cancelled;
 		}
 
-		private synchronized InMemoryQueueCallback takeForCommit() {
+		private synchronized InMemoryQueueCallback<IndexedMatrixValue> takeForCommit() {
 			if(_committed || _cancelled || _committing)
 				return null;
 			_committing = true;
-			InMemoryQueueCallback callback = _callback;
+			InMemoryQueueCallback<IndexedMatrixValue> callback = _callback;
 			_callback = null;
 			return callback;
 		}

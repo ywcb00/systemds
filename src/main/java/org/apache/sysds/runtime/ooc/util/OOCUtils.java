@@ -163,7 +163,7 @@ public class OOCUtils {
 		OOCStream.QueueCallback<IndexedMatrixValue> callback = null;
 		try {
 			budget.reserveBlocking(bytes);
-			callback = new InMemoryQueueCallback(value, null, budget, bytes);
+			callback = new InMemoryQueueCallback<>(value, null, budget, bytes);
 			budget.close();
 			out.enqueue(callback);
 			callback = null;

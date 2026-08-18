@@ -281,7 +281,8 @@ public class OOCCacheManager {
 		return getCache().isWithinLimits() && OOCInstruction.getComputeInFlight() <= OOCInstruction.getComputeBackpressureThreshold();
 	}
 
-	public static OOCCacheScheduler.HandoverHandle handover(BlockKey key, InMemoryQueueCallback callback) {
+	public static OOCCacheScheduler.HandoverHandle handover(BlockKey key,
+		InMemoryQueueCallback<IndexedMatrixValue> callback) {
 		return getCache().handover(key, callback);
 	}
 

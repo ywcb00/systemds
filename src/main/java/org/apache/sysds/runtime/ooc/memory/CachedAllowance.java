@@ -56,12 +56,12 @@ public class CachedAllowance extends SyncMemoryAllowance {
 		_handoverSchedulingRequested = false;
 	}
 
-	public void handover(InMemoryQueueCallback callback, int index) {
+	public void handover(InMemoryQueueCallback<IndexedMatrixValue> callback, int index) {
 		if(callback == null)
 			throw new IllegalArgumentException("Cannot hand over null callback.");
 		callback.transferOwnershipBlocking(this);
 
-		InMemoryQueueCallback root = (InMemoryQueueCallback) callback.keepOpen();
+		InMemoryQueueCallback<IndexedMatrixValue> root = callback.keepOpen();
 		callback.close();
 		root.getHandle().attachCachedAllowance(this, index);
 
@@ -88,7 +88,7 @@ public class CachedAllowance extends SyncMemoryAllowance {
 		while(true) {
 			BlockKey cacheKey = null;
 			OOCCacheScheduler.HandoverHandle handover = null;
-			InMemoryQueueCallback local = null;
+			InMemoryQueueCallback<IndexedMatrixValue> local = null;
 
 			synchronized(entry) {
 				if(entry._local != null && entry._handover == null)
@@ -124,7 +124,7 @@ public class CachedAllowance extends SyncMemoryAllowance {
 				if(!future.isDone())
 					return null;
 				boolean committed = future.join();
-				InMemoryQueueCallback localToClose = null;
+				InMemoryQueueCallback<IndexedMatrixValue> localToClose = null;
 				synchronized(entry) {
 					if(entry._handover != handover)
 						continue;
@@ -171,8 +171,8 @@ public class CachedAllowance extends SyncMemoryAllowance {
 					throw DMLRuntimeException.of(ex.getCause() == null ? ex : ex.getCause());
 				return committed == true;
 			}).thenCompose(committed -> {
-				InMemoryQueueCallback localToClose = null;
-				InMemoryQueueCallback local = null;
+				InMemoryQueueCallback<IndexedMatrixValue> localToClose = null;
+				InMemoryQueueCallback<IndexedMatrixValue> local = null;
 				BlockKey key;
 
 				synchronized(entry) {
@@ -215,7 +215,7 @@ public class CachedAllowance extends SyncMemoryAllowance {
 		while(true) {
 			OOCCacheScheduler.HandoverHandle handover = null;
 			BlockKey forgetKey = null;
-			InMemoryQueueCallback localToClose = null;
+			InMemoryQueueCallback<IndexedMatrixValue> localToClose = null;
 
 			synchronized(entry) {
 				if(entry._local != null && entry._handover == null) {
@@ -410,7 +410,7 @@ public class CachedAllowance extends SyncMemoryAllowance {
 			if(bytes <= 0)
 				return 0;
 
-			InMemoryQueueCallback retained = (InMemoryQueueCallback) entry._local.keepOpen();
+			InMemoryQueueCallback<IndexedMatrixValue> retained = entry._local.keepOpen();
 				try {
 					entry._cacheKey = new BlockKey(_streamId, _nextBlockId.getAndIncrement());
 					entry._handover = OOCCacheManager.handover(entry._cacheKey, retained);
@@ -448,7 +448,7 @@ public class CachedAllowance extends SyncMemoryAllowance {
 		onFinishedHandover(bytes);
 	}
 
-	private void closeRoot(InMemoryQueueCallback local) {
+	private void closeRoot(InMemoryQueueCallback<IndexedMatrixValue> local) {
 		local.getHandle().detachCachedAllowance();
 		local.close();
 	}
@@ -486,12 +486,12 @@ public class CachedAllowance extends SyncMemoryAllowance {
 	}
 
 	private static final class SlotEntry {
-		private InMemoryQueueCallback _local;
+		private InMemoryQueueCallback<IndexedMatrixValue> _local;
 		private BlockKey _cacheKey;
 		private OOCCacheScheduler.HandoverHandle _handover;
 		private long _pendingBytes;
 
-		private SlotEntry(InMemoryQueueCallback local) {
+		private SlotEntry(InMemoryQueueCallback<IndexedMatrixValue> local) {
 			_local = local;
 		}
 	}

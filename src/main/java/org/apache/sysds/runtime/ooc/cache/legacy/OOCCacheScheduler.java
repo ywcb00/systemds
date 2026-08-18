@@ -106,7 +106,7 @@ public interface OOCCacheScheduler {
 		OOCStream.QueueCallback<IndexedMatrixValue> reclaim();
 	}
 
-	HandoverHandle handover(BlockKey key, InMemoryQueueCallback callback);
+	HandoverHandle handover(BlockKey key, InMemoryQueueCallback<IndexedMatrixValue> callback);
 
 	/**
 	 * Places a new source-backed block in the cache and registers the location with the IO handler. The entry is
