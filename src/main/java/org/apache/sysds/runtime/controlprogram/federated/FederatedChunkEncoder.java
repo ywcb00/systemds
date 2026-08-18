@@ -36,7 +36,8 @@ import io.netty.handler.stream.ChunkedInput;
 import io.netty.handler.stream.ChunkedWriteHandler;
 
 public final class FederatedChunkEncoder {
-	private FederatedChunkEncoder() {}
+	private FederatedChunkEncoder() {
+	}
 
 	/**
 	 * Create a chunked input over the serialized form of the given message. Serialization starts immediately on a pool

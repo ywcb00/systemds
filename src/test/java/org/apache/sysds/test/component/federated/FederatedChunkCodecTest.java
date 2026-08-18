@@ -97,8 +97,8 @@ public class FederatedChunkCodecTest {
 	@Test
 	public void unknownFrameTypeThrowsException() throws Exception {
 		byte unknownType = 7; // not part of the protocol, must fail fast instead of stalling
-		ByteBuf unknownTypeFrame = Unpooled.buffer(FederatedChunkProtocol.HEADER_LEN)
-			.writeByte(unknownType).writeInt(0);
+		ByteBuf unknownTypeFrame = Unpooled.buffer(FederatedChunkProtocol.HEADER_LEN).writeByte(unknownType)
+			.writeInt(0);
 		Throwable caught = writeAndAwaitException(unknownTypeFrame);
 		Assert.assertTrue("expected an IOException, got " + caught, caught instanceof IOException);
 		Assert.assertTrue(String.valueOf(caught).contains("Unknown federated chunk frame type: " + unknownType));
