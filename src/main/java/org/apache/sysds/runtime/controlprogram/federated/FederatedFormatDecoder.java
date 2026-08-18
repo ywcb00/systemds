@@ -34,8 +34,8 @@ public final class FederatedFormatDecoder extends ByteToMessageDecoder {
 		byte marker = in.readByte();
 		ChannelPipeline cp = ctx.pipeline();
 		if(marker == FederatedChunkProtocol.MARKER_CHUNKED) {
-			cp.addAfter(ctx.name(), "FederatedFrameDecoder", FederatedChunkProtocol.newFrameDecoder());
-			cp.addAfter("FederatedFrameDecoder", "FederatedChunkDecoder", new FederatedChunkDecoder());
+			cp.addAfter(ctx.name(), "FederatedChunkFrameDecoder", FederatedChunkProtocol.newChunkFrameDecoder());
+			cp.addAfter("FederatedChunkFrameDecoder", "FederatedChunkDecoder", new FederatedChunkDecoder());
 		}
 		else {
 			cp.addAfter(ctx.name(), "FederatedObjectDecoder", FederationUtils.decoder());

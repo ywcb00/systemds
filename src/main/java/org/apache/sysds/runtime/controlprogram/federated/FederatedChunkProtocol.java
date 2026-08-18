@@ -46,7 +46,7 @@ public final class FederatedChunkProtocol {
 	 * @param chunkSize payload bytes per data frame
 	 * @return frame size including the header
 	 */
-	static int maxFrameLength(int chunkSize) {
+	static int maxChunkFrameLength(int chunkSize) {
 		return chunkSize + HEADER_LEN;
 	}
 
@@ -55,8 +55,8 @@ public final class FederatedChunkProtocol {
 	 *
 	 * @return frame decoder sized for the default chunk size
 	 */
-	static LengthFieldBasedFrameDecoder newFrameDecoder() {
-		return new LengthFieldBasedFrameDecoder(maxFrameLength(DEFAULT_CHUNK_SIZE), LENGTH_FIELD_OFFSET,
+	static LengthFieldBasedFrameDecoder newChunkFrameDecoder() {
+		return new LengthFieldBasedFrameDecoder(maxChunkFrameLength(DEFAULT_CHUNK_SIZE), LENGTH_FIELD_OFFSET,
 			LENGTH_FIELD_LENGTH, LENGTH_ADJUSTMENT, INITIAL_BYTES_TO_STRIP);
 	}
 

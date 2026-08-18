@@ -141,7 +141,7 @@ public class FederatedChunkCodecTest {
 	}
 
 	private static Throwable awaitException(EmbeddedChannel channel) throws InterruptedException {
-		for(int i = 0; i < 200; i++) {
+		for(int i = 0; i < 20; i++) {
 			channel.runPendingTasks();
 			try {
 				channel.checkException();
@@ -149,16 +149,16 @@ public class FederatedChunkCodecTest {
 			catch(Throwable t) {
 				return t;
 			}
-			Thread.sleep(5);
+			Thread.sleep(50);
 		}
 		throw new AssertionError("no exception propagated");
 	}
 
 	private static void awaitProducerFinished(RecordingAllocator alloc) throws InterruptedException {
-		for(int i = 0; i < 200; i++) {
+		for(int i = 0; i < 20; i++) {
 			if(alloc.sawFinalFrame())
 				return;
-			Thread.sleep(5);
+			Thread.sleep(50);
 		}
 		throw new AssertionError("producer did not finish");
 	}
@@ -185,12 +185,12 @@ public class FederatedChunkCodecTest {
 	}
 
 	private static void pumpOutbound(EmbeddedChannel channel, ChannelFuture done, List<ByteBuf> out) throws Exception {
-		for(int i = 0; i < 800; i++) {
+		for(int i = 0; i < 200; i++) {
 			channel.runPendingTasks();
 			drainOutbound(channel, out);
 			if(done.isDone())
 				break;
-			Thread.sleep(2);
+			Thread.sleep(8);
 		}
 		drainOutbound(channel, out);
 	}
@@ -214,12 +214,12 @@ public class FederatedChunkCodecTest {
 	}
 
 	private static FederatedResponse awaitResponse(EmbeddedChannel channel) throws InterruptedException {
-		for(int i = 0; i < 200; i++) {
+		for(int i = 0; i < 20; i++) {
 			channel.runPendingTasks();
 			FederatedResponse response = channel.readInbound();
 			if(response != null)
 				return response;
-			Thread.sleep(5);
+			Thread.sleep(50);
 		}
 		throw new AssertionError("no decoded response");
 	}
