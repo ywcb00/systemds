@@ -274,6 +274,8 @@ public enum Builtins {
 	PCAINVERSE("pcaInverse", true),
 	PCATRANSFORM("pcaTransform", true),
 	PNMF("pnmf", true),
+	POWERTRANSFORM("powerTransform", true),
+	POWERTRANSFORMAPPLY("powerTransformApply", true),
 	PPCA("ppca", true),
 	PPRED("ppred", false),
 	PROD("prod", false),
