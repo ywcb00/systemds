@@ -61,9 +61,12 @@ Contributors must author their own pull request descriptions, bug reports, discu
 and other project communications. Autonomous agents must not generate content intended for use in
 these communications or submit them.
 
-Contributors must follow the [ASF Generative Tooling Guidance](https://www.apache.org/legal/generative-tooling.html).
-Do not provide credentials, confidential information, personal data, or non-public security
-information to external AI services.
+Contributors must ensure that AI-generated contributions do not introduce incompatible licenses or
+contain undisclosed third-party material, and that the terms of service of all tools used do not
+conflict with the [Open Source Definition](https://opensource.org/osd/). Review the
+[ASF Generative Tooling Guidance](https://www.apache.org/legal/generative-tooling.html) for further
+information. Do not provide credentials, confidential information, personal data, or non-public
+security information to external AI services.
 
 ## Code Style
 
