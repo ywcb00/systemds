@@ -26,6 +26,7 @@ import java.io.IOException;
 public interface SpillableObject {
 	boolean tryWrite(DataOutput out)  throws IOException;
 	void read(DataInput in)  throws IOException;
+	long size();
 
 	default void discard() {
 	}

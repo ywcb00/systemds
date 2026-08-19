@@ -19,9 +19,11 @@
 
 package org.apache.sysds.runtime.ooc.store;
 
+import org.apache.sysds.runtime.instructions.ooc.CachingStream;
 import org.apache.sysds.runtime.ooc.cache.BlockEntry;
 import org.apache.sysds.runtime.ooc.cache.BlockKey;
 import org.apache.sysds.runtime.ooc.cache.OOCCache;
+import org.apache.sysds.runtime.ooc.cache.OOCCacheManager;
 import org.apache.sysds.runtime.ooc.cache.OOCFuture;
 import org.apache.sysds.runtime.ooc.cache.io.SpillableObject;
 import org.apache.sysds.runtime.ooc.memory.ManagedPayload;
@@ -48,6 +50,14 @@ public final class StateTable<T extends SpillableObject> implements AutoCloseabl
 	private Slot[] _slots;
 	private volatile AtomicIntegerArray _generationSlots;
 	private volatile boolean _closed;
+
+	public StateTable() {
+		this(OOCCacheManager.getGlobalCache(), CachingStream._streamSeq.getNextID());
+	}
+
+	public StateTable(int numSlots) {
+		this(OOCCacheManager.getGlobalCache(), CachingStream._streamSeq.getNextID(), numSlots);
+	}
 
 	public StateTable(OOCCache cache, long streamId) {
 		this(cache, streamId, INITIAL_SLOTS);

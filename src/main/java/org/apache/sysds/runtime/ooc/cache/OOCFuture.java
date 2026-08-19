@@ -19,10 +19,16 @@
 
 package org.apache.sysds.runtime.ooc.cache;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -49,6 +55,52 @@ public class OOCFuture<T> {
 		future._error = error;
 		future._done = true;
 		return future;
+	}
+
+	public static <T> OOCFuture<List<T>> allOf(List<? extends OOCFuture<? extends T>> futures,
+		Consumer<? super T> failureCleanup) {
+		Objects.requireNonNull(futures);
+		Objects.requireNonNull(failureCleanup);
+		if(futures.isEmpty())
+			return completed(List.of());
+		OOCFuture<List<T>> result = new OOCFuture<>();
+		Object[] values = new Object[futures.size()];
+		AtomicInteger remaining = new AtomicInteger(futures.size());
+		AtomicReference<Throwable> firstError = new AtomicReference<>();
+		for(int i = 0; i < futures.size(); i++) {
+			int index = i;
+			futures.get(i).whenComplete((value, error) -> {
+				values[index] = value;
+				if(error != null)
+					firstError.compareAndSet(null, error);
+				if(remaining.decrementAndGet() != 0)
+					return;
+				Throwable failure = firstError.get();
+				List<T> completed = new ArrayList<>(values.length);
+				for(Object item : values) {
+					@SuppressWarnings("unchecked")
+					T typed = (T) item;
+					completed.add(typed);
+				}
+				if(failure == null) {
+					result.complete(Collections.unmodifiableList(completed));
+					return;
+				}
+				for(T item : completed) {
+					if(item == null)
+						continue;
+					try {
+						failureCleanup.accept(item);
+					}
+					catch(Throwable cleanupError) {
+						if(cleanupError != failure)
+							failure.addSuppressed(cleanupError);
+					}
+				}
+				result.completeExceptionally(failure);
+			});
+		}
+		return result;
 	}
 
 	public boolean complete(T value) {

@@ -250,6 +250,43 @@ public class OOCPrimitiveTest {
 	}
 
 	@Test
+	public void testNaryJoinOutOfOrder() {
+		SubscribableTaskQueue<IndexedMatrixValue> first = new SubscribableTaskQueue<>();
+		SubscribableTaskQueue<IndexedMatrixValue> second = new SubscribableTaskQueue<>();
+		SubscribableTaskQueue<IndexedMatrixValue> third = new SubscribableTaskQueue<>();
+		SubscribableTaskQueue<IndexedMatrixValue> output = new SubscribableTaskQueue<>();
+		for(SubscribableTaskQueue<IndexedMatrixValue> stream : List.of(first, second, third, output))
+			stream.setData(new MatrixObject(ValueType.FP64, "/dev/null",
+				new MetaDataFormat(new MatrixCharacteristics(1, 2, 1), FileFormat.BINARY)));
+		CachingStream cachedSecond = new CachingStream(second);
+		first.enqueue(new IndexedMatrixValue(new MatrixIndexes(1, 1), new MatrixBlock(1, 1, 10d)));
+		first.enqueue(new IndexedMatrixValue(new MatrixIndexes(1, 2), new MatrixBlock(1, 1, 20d)));
+		second.enqueue(new IndexedMatrixValue(new MatrixIndexes(1, 2), new MatrixBlock(1, 1, 2d)));
+		second.enqueue(new IndexedMatrixValue(new MatrixIndexes(1, 1), new MatrixBlock(1, 1, 1d)));
+		third.enqueue(new IndexedMatrixValue(new MatrixIndexes(1, 1), new MatrixBlock(1, 1, 100d)));
+		third.enqueue(new IndexedMatrixValue(new MatrixIndexes(1, 2), new MatrixBlock(1, 1, 200d)));
+		first.closeInput();
+		second.closeInput();
+		third.closeInput();
+
+		OOCInstructionUtils.naryEquiJoin(List.of(first, cachedSecond, third), output,
+			blocks -> new IndexedMatrixValue(blocks.get(0).getIndexes(),
+				new MatrixBlock(1, 1, blocks.get(0).getValue().get(0, 0) + 10 * blocks.get(1).getValue().get(0, 0) +
+					100 * blocks.get(2).getValue().get(0, 0))),
+			new StreamContext());
+
+		output.start();
+		Map<Long, Double> values = new HashMap<>();
+		OOCStream.QueueCallback<IndexedMatrixValue> callback;
+		while((callback = output.dequeueCB()) != null)
+			try(OOCStream.QueueCallback<IndexedMatrixValue> current = callback) {
+				values.put(current.get().getIndexes().getColumnIndex(), current.get().getValue().get(0, 0));
+			}
+		Assert.assertEquals(Map.of(1L, 10020d, 2L, 20040d), values);
+		cachedSecond.scheduleDeletion();
+	}
+
+	@Test
 	public void testJoinOutOfOrder() {
 		SubscribableTaskQueue<IndexedMatrixValue> left = new SubscribableTaskQueue<>();
 		SubscribableTaskQueue<IndexedMatrixValue> right = new SubscribableTaskQueue<>();

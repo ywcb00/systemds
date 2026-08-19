@@ -22,16 +22,18 @@ package org.apache.sysds.runtime.ooc.primitives;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.ToIntFunction;
+import java.util.function.ToLongFunction;
 
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.ooc.CachingStream;
 import org.apache.sysds.runtime.instructions.ooc.OOCStream;
 import org.apache.sysds.runtime.instructions.ooc.OOCStreamable;
 import org.apache.sysds.runtime.instructions.ooc.SubscribableTaskQueue;
-import org.apache.sysds.runtime.instructions.spark.data.IndexedMatrixValue;
-import org.apache.sysds.runtime.matrix.data.MatrixBlock;
-import org.apache.sysds.runtime.ooc.cache.OOCFuture;
 import org.apache.sysds.runtime.ooc.cache.OOCCacheManager;
+import org.apache.sysds.runtime.ooc.cache.OOCFuture;
+import org.apache.sysds.runtime.ooc.cache.io.SpillableObject;
+import org.apache.sysds.runtime.ooc.memory.InMemoryQueueCallback;
 import org.apache.sysds.runtime.ooc.memory.ReservationBudget;
 import org.apache.sysds.runtime.ooc.planning.OOCAccessPattern;
 import org.apache.sysds.runtime.ooc.store.StateTable;
@@ -40,24 +42,29 @@ import org.apache.sysds.runtime.ooc.util.OOCInstructionUtils;
 import org.apache.sysds.runtime.ooc.util.OOCUtils;
 import org.apache.sysds.runtime.ooc.util.StateTableUtils;
 
-public class JoinOOCPrimitive extends OOCPrimitive {
-	private final OOCStreamable<IndexedMatrixValue> _left;
-	private final OOCStreamable<IndexedMatrixValue> _right;
-	private final OOCStreamable<IndexedMatrixValue> _output;
-	private final BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> _operation;
+public class JoinOOCPrimitive<L extends SpillableObject, R extends SpillableObject, O> extends OOCPrimitive {
+	private final OOCStreamable<O> _output;
+	private final ToIntFunction<L> _leftKey;
+	private final ToIntFunction<R> _rightKey;
+	private final ToLongFunction<O> _outputSize;
+	private final BiFunction<L, R, O> _operation;
+	private final long _taskBytes;
 	private final AtomicInteger _pending = new AtomicInteger(1);
 	private final AtomicInteger _unmatched = new AtomicInteger();
 	private final CompletableFuture<Void> _pendingCompletion = new CompletableFuture<>();
-	private StateTable<IndexedMatrixValue> _table;
+	private StateTable<SpillableObject> _table;
+	private OOCStream<O> _outputStream;
 
-	public JoinOOCPrimitive(OOCStreamable<IndexedMatrixValue> left, OOCStreamable<IndexedMatrixValue> right,
-		OOCStreamable<IndexedMatrixValue> output, BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> operation,
-		StreamContext context) {
+	public JoinOOCPrimitive(OOCStreamable<L> left, OOCStreamable<R> right, OOCStreamable<O> output,
+		ToIntFunction<L> leftKey, ToIntFunction<R> rightKey, ToLongFunction<O> outputSize,
+		BiFunction<L, R, O> operation, long taskBytes, StreamContext context) {
 		super(context, left, right);
-		_left = left;
-		_right = right;
 		_output = output;
+		_leftKey = leftKey;
+		_rightKey = rightKey;
+		_outputSize = outputSize;
 		_operation = operation;
+		_taskBytes = taskBytes;
 	}
 
 	@Override
@@ -80,44 +87,34 @@ public class JoinOOCPrimitive extends OOCPrimitive {
 
 	@Override
 	protected void startExecution() {
-		OOCStream<IndexedMatrixValue> left = getInputReadStream(0);
-		OOCStream<IndexedMatrixValue> right = getInputReadStream(1);
+		OOCStream<L> left = getInputReadStream(0);
+		OOCStream<R> right = getInputReadStream(1);
 		_table = new StateTable<>(OOCCacheManager.getGlobalCache(), CachingStream._streamSeq.getNextID());
-		OOCStream<IndexedMatrixValue> output = _output.getWriteStream();
+		_outputStream = _output.getWriteStream();
 		OOCStream<JoinWork> matches = new SubscribableTaskQueue<>();
-		long inputBytes = Math.max(OOCUtils.estimateOutputTileBytes(_left.getDataCharacteristics()),
-			OOCUtils.estimateOutputTileBytes(_right.getDataCharacteristics()));
-		long outputBytes = OOCUtils.estimateOutputTileBytes(_output.getDataCharacteristics());
-		long taskBytes = outputBytes + 2 * inputBytes;
 
-		getContext().addOutStream(output);
-		CompletableFuture<Void> processing = OOCInstructionUtils.submitCloseableOOCTasks(matches, (JoinWork work) -> {
-			IndexedMatrixValue mleft = work._left.get();
-			IndexedMatrixValue mright = work._right.get();
-			OOCUtils.enqueueExact(output, new IndexedMatrixValue(mleft.getIndexes(),
-				_operation.apply((MatrixBlock) mleft.getValue(), (MatrixBlock) mright.getValue())), work._budget);
-		}, getContext());
+		getContext().addOutStream(_outputStream);
+		CompletableFuture<Void> processing = OOCInstructionUtils.submitCloseableOOCTasks(matches, this::process,
+			getContext());
 		CompletableFuture.allOf(processing, _pendingCompletion).thenRun(() -> {
 			try {
 				_table.close();
 				onComplete();
 			}
 			finally {
-				output.closeInput();
+				_outputStream.closeInput();
 			}
 		});
 
-		OOCInstructionUtils.submitOOCTask(() -> drive(left, right, matches, taskBytes),
-			new StreamContext().addOutStream(output));
+		OOCInstructionUtils.submitOOCTask(() -> drive(left, right, matches),
+			new StreamContext().addOutStream(_outputStream));
 	}
 
-	private void drive(OOCStream<IndexedMatrixValue> leftInput, OOCStream<IndexedMatrixValue> rightInput,
-		OOCStream<JoinWork> matches, long taskBytes) {
-		long cols = _right.getDataCharacteristics().getNumColBlocks();
+	private void drive(OOCStream<L> leftInput, OOCStream<R> rightInput, OOCStream<JoinWork> matches) {
 		try {
 			while(true) {
-				OOCStream.QueueCallback<IndexedMatrixValue> left = leftInput.dequeueCB();
-				OOCStream.QueueCallback<IndexedMatrixValue> right = rightInput.dequeueCB();
+				OOCStream.QueueCallback<L> left = leftInput.dequeueCB();
+				OOCStream.QueueCallback<R> right = rightInput.dequeueCB();
 				boolean leftEos = left == null || left.isEos();
 				boolean rightEos = right == null || right.isEos();
 				if(leftEos || rightEos) {
@@ -129,8 +126,8 @@ public class JoinOOCPrimitive extends OOCPrimitive {
 						throw new DMLRuntimeException("Join inputs contain a different number of blocks");
 					break;
 				}
-				accept(left, true, cols, taskBytes, matches);
-				accept(right, false, cols, taskBytes, matches);
+				accept(left, true, _leftKey.applyAsInt(left.get()), matches);
+				accept(right, false, _rightKey.applyAsInt(right.get()), matches);
 			}
 		}
 		catch(Throwable failure) {
@@ -142,45 +139,36 @@ public class JoinOOCPrimitive extends OOCPrimitive {
 		}
 	}
 
-	private void accept(OOCStream.QueueCallback<IndexedMatrixValue> callback, boolean left, long cols, long taskBytes,
+	@SuppressWarnings("unchecked")
+	private void accept(OOCStream.QueueCallback<? extends SpillableObject> callback, boolean left, int key,
 		OOCStream<JoinWork> matches) {
-		if(callback == null)
-			return;
-		OOCStream.QueueCallback<IndexedMatrixValue> owned = null;
 		ReservationBudget budget = null;
 		boolean pending = false;
+		boolean handedOff = false;
 		try {
-			owned = callback.keepOpen();
-			callback.close();
-			callback = null;
-			budget = OOCUtils.reserveBudget(_allowance, taskBytes);
-			IndexedMatrixValue value = owned.get();
-			long row = value.getIndexes().getRowIndex() - 1;
-			long col = value.getIndexes().getColumnIndex() - 1;
-			int slot = Math.toIntExact(row * cols + col);
+			budget = OOCUtils.reserveBudget(_allowance, _taskBytes);
 			_pending.incrementAndGet();
 			pending = true;
-			OOCFuture<StateTableUtils.Match> future = StateTableUtils.putOrTake(_table, slot, owned, budget);
-			owned = null;
+			OOCFuture<StateTableUtils.Match<SpillableObject>> future = StateTableUtils.putOrTake(_table, key,
+				(OOCStream.QueueCallback<SpillableObject>) callback, budget);
+			handedOff = true;
 			ReservationBudget pendingBudget = budget;
 			budget = null;
 			future.whenComplete((match, error) -> matchReady(match, left, pendingBudget, error, matches));
 			pending = false;
 		}
 		finally {
+			if(!handedOff)
+				callback.close();
 			if(pending)
 				completePending(matches);
-			if(callback != null)
-				callback.close();
-			if(owned != null)
-				owned.close();
 			if(budget != null)
 				budget.close();
 		}
 	}
 
-	private void matchReady(StateTableUtils.Match match, boolean left, ReservationBudget budget, Throwable error,
-		OOCStream<JoinWork> matches) {
+	private void matchReady(StateTableUtils.Match<SpillableObject> match, boolean incomingLeft,
+		ReservationBudget budget, Throwable error, OOCStream<JoinWork> matches) {
 		JoinWork work = null;
 		try {
 			if(error != null)
@@ -190,8 +178,7 @@ public class JoinOOCPrimitive extends OOCPrimitive {
 				return;
 			}
 			_unmatched.decrementAndGet();
-			work = left ? new JoinWork(match.left(), match.right(), budget) : new JoinWork(match.right(), match.left(),
-				budget);
+			work = new JoinWork(match.left(), match.right(), incomingLeft, budget);
 			match = null;
 			budget = null;
 			matches.enqueue(work);
@@ -210,6 +197,26 @@ public class JoinOOCPrimitive extends OOCPrimitive {
 			if(budget != null)
 				budget.close();
 			completePending(matches);
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private void process(JoinWork work) {
+		SpillableObject incoming = work._incoming.get();
+		SpillableObject existing = work._existing.get();
+		L left = (L) (work._incomingLeft ? incoming : existing);
+		R right = (R) (work._incomingLeft ? existing : incoming);
+		O value = _operation.apply(left, right);
+		long bytes = _outputSize.applyAsLong(value);
+		work._budget.reserveBlocking(bytes);
+		OOCStream.QueueCallback<O> callback = new InMemoryQueueCallback<>(value, null, work._budget, bytes);
+		try {
+			_outputStream.enqueue(callback);
+			callback = null;
+		}
+		finally {
+			if(callback != null)
+				callback.close();
 		}
 	}
 
@@ -233,22 +240,28 @@ public class JoinOOCPrimitive extends OOCPrimitive {
 		}
 	}
 
-	private static final class JoinWork implements AutoCloseable {
-		private final OOCStream.QueueCallback<IndexedMatrixValue> _left;
-		private final OOCStream.QueueCallback<IndexedMatrixValue> _right;
+	private final class JoinWork implements AutoCloseable {
+		private final OOCStream.QueueCallback<SpillableObject> _incoming;
+		private final OOCStream.QueueCallback<SpillableObject> _existing;
+		private final boolean _incomingLeft;
 		private final ReservationBudget _budget;
 
-		private JoinWork(OOCStream.QueueCallback<IndexedMatrixValue> left,
-			OOCStream.QueueCallback<IndexedMatrixValue> right, ReservationBudget budget) {
-			_left = left;
-			_right = right;
+		private JoinWork(OOCStream.QueueCallback<SpillableObject> incoming,
+			OOCStream.QueueCallback<SpillableObject> existing, boolean incomingLeft, ReservationBudget budget) {
+			_incoming = incoming;
+			_existing = existing;
+			_incomingLeft = incomingLeft;
 			_budget = budget;
 		}
 
 		@Override
 		public void close() {
-			try(_left; _right; _budget) {
-				// Release
+			try {
+				_incoming.close();
+				_existing.close();
+			}
+			finally {
+				_budget.close();
 			}
 		}
 	}

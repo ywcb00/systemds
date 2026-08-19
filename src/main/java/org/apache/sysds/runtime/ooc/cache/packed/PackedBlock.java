@@ -58,6 +58,11 @@ public final class PackedBlock implements SpillableObject {
 	}
 
 	@Override
+	public long size() {
+		return totalSize;
+	}
+
+	@Override
 	public void read(DataInput in) throws IOException {
 		int count = in.readInt();
 		values = new Object[count];

@@ -26,6 +26,11 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.functionobjects.IfElse;
+import org.apache.sysds.runtime.functionobjects.Minus;
+import org.apache.sysds.runtime.functionobjects.MinusMultiply;
+import org.apache.sysds.runtime.functionobjects.Multiply;
+import org.apache.sysds.runtime.functionobjects.Plus;
+import org.apache.sysds.runtime.functionobjects.PlusMultiply;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
@@ -33,6 +38,7 @@ import org.apache.sysds.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysds.runtime.instructions.cp.StringObject;
 import org.apache.sysds.runtime.instructions.spark.data.IndexedMatrixValue;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
+import org.apache.sysds.runtime.matrix.operators.BinaryOperator;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.matrix.operators.TernaryOperator;
 import org.apache.sysds.runtime.ooc.util.OOCInstructionUtils;
@@ -157,6 +163,32 @@ public class TernaryOOCInstruction extends ComputationOOCInstruction {
 
 		OOCStream<IndexedMatrixValue> qOut = createWritableStream();
 		ec.getMatrixObject(output).setStreamHandle(qOut);
+
+		if(m1.getDataCharacteristics().dimsKnown() && m2.getDataCharacteristics().dimsKnown() &&
+			m3.getDataCharacteristics().dimsKnown()) {
+			TernaryOperator operator = (TernaryOperator) _optr;
+			if(operator.fn instanceof PlusMultiply || operator.fn instanceof MinusMultiply) {
+				OOCStream<IndexedMatrixValue> product = createWritableStream();
+				BinaryOperator multiply = new BinaryOperator(Multiply.getMultiplyFnObject());
+				BinaryOperator combine = operator.fn instanceof PlusMultiply ? new BinaryOperator(
+					Plus.getPlusFnObject()) : new BinaryOperator(Minus.getMinusFnObject());
+				OOCInstructionUtils.equiJoin(m2.getStreamable(), m3.getStreamable(), product,
+					(left, right) -> left.binaryOperations(multiply, right, new MatrixBlock()), getContext());
+				OOCInstructionUtils.equiJoin(m1.getStreamable(), product, qOut,
+					(left, right) -> left.binaryOperations(combine, right, new MatrixBlock()), getContext());
+				return;
+			}
+			if(operator.fn instanceof IfElse) {
+				OOCInstructionUtils.naryEquiJoin(List.of(m1.getStreamable(), m2.getStreamable(), m3.getStreamable()),
+					qOut,
+					blocks -> new IndexedMatrixValue(blocks.get(0).getIndexes(),
+						((MatrixBlock) blocks.get(0).getValue()).ternaryOperations(operator,
+							(MatrixBlock) blocks.get(1).getValue(), (MatrixBlock) blocks.get(2).getValue(),
+							new MatrixBlock())),
+					getContext());
+				return;
+			}
+		}
 
 		List<OOCStream<IndexedMatrixValue>> streams = List.of(
 			m1.getStreamHandle(), m2.getStreamHandle(), m3.getStreamHandle());

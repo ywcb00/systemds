@@ -40,13 +40,16 @@ import org.apache.sysds.runtime.instructions.ooc.OOCStreamable;
 import org.apache.sysds.runtime.instructions.spark.data.IndexedMatrixValue;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysds.runtime.ooc.cache.OOCCacheManager;
 import org.apache.sysds.runtime.ooc.cache.OOCFuture;
+import org.apache.sysds.runtime.ooc.cache.io.SpillableObject;
 import org.apache.sysds.runtime.ooc.memory.MemoryAllowance;
 import org.apache.sysds.runtime.ooc.memory.ReservationBudget;
 import org.apache.sysds.runtime.ooc.primitives.BroadcastOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.GroupedReduceOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.JoinOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.MappingOOCPrimitive;
+import org.apache.sysds.runtime.ooc.primitives.NaryJoinOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.PlannableDataGenOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.ReduceOOCPrimitive;
 import org.apache.sysds.runtime.ooc.primitives.TransposeOOCPrimitive;
@@ -92,7 +95,39 @@ public final class OOCInstructionUtils {
 	public static void equiJoin(OOCStreamable<IndexedMatrixValue> left, OOCStreamable<IndexedMatrixValue> right,
 		OOCStream<IndexedMatrixValue> output, BiFunction<MatrixBlock, MatrixBlock, MatrixBlock> operation,
 		StreamContext context) {
-		output.assignPrimitive(new JoinOOCPrimitive(left, right, output, operation, context));
+		long cols = right.getDataCharacteristics().getNumColBlocks();
+		long inputBytes = Math.max(OOCUtils.estimateOutputTileBytes(left.getDataCharacteristics()),
+			OOCUtils.estimateOutputTileBytes(right.getDataCharacteristics()));
+		long outputBytes = OOCUtils.estimateOutputTileBytes(output.getDataCharacteristics());
+		ToIntFunction<IndexedMatrixValue> key = value -> Math
+			.toIntExact((value.getIndexes().getRowIndex() - 1) * cols + value.getIndexes().getColumnIndex() - 1);
+		keyedJoin(left, right, output, key, key, value -> ((MatrixBlock) value.getValue()).getExactSerializedSize(),
+			(leftValue, rightValue) -> new IndexedMatrixValue(leftValue.getIndexes(),
+				operation.apply((MatrixBlock) leftValue.getValue(), (MatrixBlock) rightValue.getValue())),
+			inputBytes + OOCCacheManager.getGlobalCache().maxPhysicalPinBytes(inputBytes) + outputBytes, context);
+	}
+
+	public static <L extends SpillableObject, R extends SpillableObject, O> void keyedJoin(OOCStreamable<L> left,
+		OOCStreamable<R> right, OOCStream<O> output, ToIntFunction<L> leftKey, ToIntFunction<R> rightKey,
+		ToLongFunction<O> outputSize, BiFunction<L, R, O> operation, long taskBytes, StreamContext context) {
+		output.assignPrimitive(
+			new JoinOOCPrimitive<>(left, right, output, leftKey, rightKey, outputSize, operation, taskBytes, context));
+	}
+
+	public static void naryEquiJoin(List<OOCStreamable<IndexedMatrixValue>> inputs,
+		OOCStream<IndexedMatrixValue> output, Function<List<IndexedMatrixValue>, IndexedMatrixValue> operation,
+		StreamContext context) {
+		long cols = inputs.get(0).getDataCharacteristics().getNumColBlocks();
+		long inputBytes = inputs.stream().map(OOCStreamable::getDataCharacteristics)
+			.mapToLong(OOCUtils::estimateOutputTileBytes).max().orElse(0);
+		long outputBytes = OOCUtils.estimateOutputTileBytes(output.getDataCharacteristics());
+		ToIntFunction<IndexedMatrixValue> key = value -> Math
+			.toIntExact((value.getIndexes().getRowIndex() - 1) * cols + value.getIndexes().getColumnIndex() - 1);
+		ToLongFunction<IndexedMatrixValue> size = value -> ((MatrixBlock) value.getValue()).getExactSerializedSize();
+		long joinBytes = (inputs.size() - 1) * OOCCacheManager.getGlobalCache().maxPhysicalPinBytes(inputBytes) +
+			outputBytes;
+		output.assignPrimitive(
+			new NaryJoinOOCPrimitive(inputs, output, key, size, operation, inputBytes, joinBytes, context));
 	}
 
 	public static void indexedBroadcastMap(OOCStreamable<IndexedMatrixValue> streamed,

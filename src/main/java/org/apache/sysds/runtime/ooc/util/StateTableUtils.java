@@ -20,9 +20,8 @@
 package org.apache.sysds.runtime.ooc.util;
 
 import org.apache.sysds.runtime.instructions.ooc.OOCStream;
-import org.apache.sysds.runtime.instructions.spark.data.IndexedMatrixValue;
-import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.ooc.cache.OOCFuture;
+import org.apache.sysds.runtime.ooc.cache.io.SpillableObject;
 import org.apache.sysds.runtime.ooc.memory.InMemoryQueueCallback;
 import org.apache.sysds.runtime.ooc.memory.ManagedPayload;
 import org.apache.sysds.runtime.ooc.memory.MemoryAllowance;
@@ -31,24 +30,64 @@ import org.apache.sysds.runtime.ooc.store.StateTable;
 import org.apache.sysds.runtime.ooc.store.StoreLease;
 
 public final class StateTableUtils {
-	public static OOCFuture<Match> putOrTake(StateTable<IndexedMatrixValue> table, int slot,
-		OOCStream.QueueCallback<IndexedMatrixValue> tile, MemoryAllowance allowance) {
-		if(tile instanceof MaterializedCallback<IndexedMatrixValue> pinned && pinned.pinnedEntry() != null)
-			return putReferenceOrTake(table, slot, pinned, allowance);
-		ManagedPayload<IndexedMatrixValue> payload;
-		if(tile instanceof InMemoryQueueCallback managed && managed.getManagedBytes() > 0) {
+	public static <T extends SpillableObject> OOCFuture<OOCStream.QueueCallback<T>> take(StateTable<T> table, int slot,
+		MemoryAllowance allowance) {
+		OOCFuture<StoreLease<T>> future = table.take(slot, allowance);
+		OOCFuture<OOCStream.QueueCallback<T>> toReturn = new OOCFuture<>();
+		future.whenComplete((l, err) -> {
+			if(err != null)
+				toReturn.completeExceptionally(err);
+			else
+				toReturn.complete(new MaterializedCallback<>(l));
+		});
+		return toReturn;
+	}
+
+	public static <T extends SpillableObject> void put(StateTable<T> table, int slot, OOCStream.QueueCallback<T> tile,
+		MemoryAllowance allowance) {
+		if(tile instanceof MaterializedCallback<T> pinned && pinned.pinnedEntry() != null) {
+			table.putReference(slot, pinned.pinnedEntry());
+			return;
+		}
+		ManagedPayload<T> payload;
+		if(tile instanceof InMemoryQueueCallback<T> managed && managed.getManagedBytes() > 0)
+			payload = managed.extractManagedPayload();
+		else {
+			T value = tile.get();
+			long bytes = value.size();
+			allowance.reserveBlocking(bytes);
+			payload = new ManagedPayload<>(value, bytes, allowance);
+		}
+		try {
+			table.put(slot, payload);
+		}
+		catch(RuntimeException error) {
+			payload.release();
+			throw error;
+		}
+	}
+
+	public static <T extends SpillableObject> OOCFuture<Match<T>> putOrTake(StateTable<T> table, int slot,
+		OOCStream.QueueCallback<T> tile, MemoryAllowance allowance) {
+		if(tile instanceof MaterializedCallback<T> pinned && pinned.pinnedEntry() != null) {
+			MaterializedCallback<T> retained = (MaterializedCallback<T>) pinned.keepOpen();
+			pinned.close();
+			return putReferenceOrTake(table, slot, retained, allowance);
+		}
+		ManagedPayload<T> payload;
+		if(tile instanceof InMemoryQueueCallback<T> managed && managed.getManagedBytes() > 0) {
 			payload = managed.extractManagedPayload();
 			managed.close();
 		}
 		else {
-			IndexedMatrixValue value = tile.get();
-			long bytes = ((MatrixBlock) value.getValue()).getExactSerializedSize();
+			T value = tile.get();
+			long bytes = value.size();
 			allowance.reserveBlocking(bytes);
 			payload = new ManagedPayload<>(value, bytes, allowance);
 			tile.close();
 		}
-		OOCFuture<Match> result = new OOCFuture<>();
-		OOCFuture<StoreLease<IndexedMatrixValue>> matched;
+		OOCFuture<Match<T>> result = new OOCFuture<>();
+		OOCFuture<StoreLease<T>> matched;
 		try {
 			matched = table.putOrTake(slot, payload, allowance);
 		}
@@ -65,16 +104,16 @@ public final class StateTableUtils {
 				result.complete(null);
 			else
 				result.complete(
-					new Match(new MaterializedCallback<>(StoreLease.create(payload.value(), payload::release)),
+					new Match<>(new MaterializedCallback<>(StoreLease.create(payload.value(), payload::release)),
 						new MaterializedCallback<>(lease)));
 		});
 		return result;
 	}
 
-	private static OOCFuture<Match> putReferenceOrTake(StateTable<IndexedMatrixValue> table, int slot,
-		MaterializedCallback<IndexedMatrixValue> pinned, MemoryAllowance allowance) {
-		OOCFuture<Match> result = new OOCFuture<>();
-		OOCFuture<StoreLease<IndexedMatrixValue>> matched;
+	private static <T extends SpillableObject> OOCFuture<Match<T>> putReferenceOrTake(StateTable<T> table, int slot,
+		MaterializedCallback<T> pinned, MemoryAllowance allowance) {
+		OOCFuture<Match<T>> result = new OOCFuture<>();
+		OOCFuture<StoreLease<T>> matched;
 		try {
 			matched = table.putReferenceOrTake(slot, pinned.pinnedEntry(), allowance);
 		}
@@ -92,12 +131,11 @@ public final class StateTableUtils {
 				result.complete(null);
 			}
 			else
-				result.complete(new Match(pinned, new MaterializedCallback<>(lease)));
+				result.complete(new Match<>(pinned, new MaterializedCallback<>(lease)));
 		});
 		return result;
 	}
 
-	public record Match(OOCStream.QueueCallback<IndexedMatrixValue> left,
-		OOCStream.QueueCallback<IndexedMatrixValue> right) {
+	public record Match<T extends SpillableObject>(OOCStream.QueueCallback<T> left, OOCStream.QueueCallback<T> right) {
 	}
 }

@@ -98,6 +98,12 @@ public class IndexedMatrixValue implements SpillableObject, Serializable
 	}
 
 	@Override
+	public long size() {
+		MatrixBlock block = (MatrixBlock) _value;
+		return Math.max(block.getExactSerializedSize(), block.getInMemorySize());
+	}
+
+	@Override
 	public void discard() {
 		_value = null;
 	}
