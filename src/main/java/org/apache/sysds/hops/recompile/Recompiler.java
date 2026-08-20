@@ -46,6 +46,7 @@ import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.CompilerConfig.ConfigType;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataGenOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
@@ -387,6 +388,13 @@ public class Recompiler {
 			memo.extract(hops, status);
 		}
 		
+		// sparsity-based DAG recompilation if enabled
+		if(ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.SPARSITY_RECOMPILE)) {
+			// create deep copy of hops for in-place
+			Hop.resetVisitStatus(hops);
+			hops = SparsityDAGRecompiler.optimize(hops);
+		}
+
 		// codegen if enabled
 		if( codegen ) {
 			//create deep copy for in-place
@@ -396,7 +404,7 @@ public class Recompiler {
 			hops = SpoofCompiler.optimize(hops,
 				(status==null || !status.isInitialCodegen()));
 		}
-		
+
 		// set max parallelism constraint to ensure compilation 
 		// incl rewrites does not lose these hop-lop constraints
 		Hop.resetVisitStatus(hops);

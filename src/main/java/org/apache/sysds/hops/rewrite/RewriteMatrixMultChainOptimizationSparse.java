@@ -65,6 +65,11 @@ public class RewriteMatrixMultChainOptimizationSparse extends RewriteMatrixMultC
 			LOG.trace("Optimal Sparse MM Chain:");
 			mmChainRelinkHops(mmOperators.get(0), 0, size - 1, mmChain, mmOperators, new MutableInt(1), split, 1);
 		}
+		else if(dimsKnown) {
+			LOG.debug("Input metadata is not available for sparsity rewrites. " +
+				"This could be resolved by pre-fetching data from disk during recompilation.");
+			// hop.setRequiresRecompile();
+		}
 	}
 	
 	/**
@@ -132,7 +137,7 @@ public class RewriteMatrixMultChainOptimizationSparse extends RewriteMatrixMultC
 			Hop currentHop = chain.get(counter);
 			inputMetaAvail &= currentHop.isMatrix();
 			inputMetaAvail &= !currentHop.isFederated();
-			inputMetaAvail &= (currentHop.getDataCharacteristics().getNonZeros() != -1);
+			inputMetaAvail &= (currentHop.getNnz() != -1);
 			if(inputMetaAvail) {
 				sketchArray[counter] = new MMNode(currentHop.getDataCharacteristics());
 			}
