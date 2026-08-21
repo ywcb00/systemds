@@ -63,7 +63,7 @@ public class MatrixMatrixBinaryMultiplicationTest extends AutomatedTestBase {
 
 	@Test
 	public void testMVBinaryMultiplication2() {
-		runMatrixVectorMultiplicationTest(cols_skinny, false);
+		runMatrixVectorMultiplicationTest(cols_skinny, true);
 	}
 
 	private void runMatrixVectorMultiplicationTest(int cols, boolean sparse )
@@ -91,7 +91,7 @@ public class MatrixMatrixBinaryMultiplicationTest extends AutomatedTestBase {
 			A_data = null;
 			A_mb = null;
 
-			double[][] x_data = getRandomMatrix(cols, rows, 0, 1, 1.0, 10);
+			double[][] x_data = getRandomMatrix(cols, rows, 0, 1, sparse ? sparsity2 : 1.0, 10);
 			MatrixBlock x_mb = DataConverter.convertToMatrixBlock(x_data);
 			writer.writeMatrixToHDFS(x_mb, input(INPUT_NAME2), cols, rows, 1000, x_mb.getNonZeros());
 			HDFSTool.writeMetaDataFile(input(INPUT_NAME2 + ".mtd"), Types.ValueType.FP64,

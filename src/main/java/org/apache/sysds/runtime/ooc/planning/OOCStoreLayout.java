@@ -23,14 +23,14 @@ import org.apache.sysds.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 
 public enum OOCStoreLayout {
-	ROW_MAJOR;
+	ROW_MAJOR, COL_MAJOR;
 
 	public int linearize(MatrixIndexes indexes, DataCharacteristics characteristics) {
 		if(characteristics == null || !characteristics.dimsKnown() || characteristics.getBlocksize() <= 0)
 			throw new IllegalArgumentException("Materialized store layout requires known dimensions and block size.");
-		long columns = characteristics.getNumColBlocks();
-		long index = Math.addExact(Math.multiplyExact(indexes.getRowIndex() - 1, columns),
-			indexes.getColumnIndex() - 1);
+		long index = this == ROW_MAJOR ? (indexes.getRowIndex() - 1) * characteristics.getNumColBlocks() +
+			indexes.getColumnIndex() -
+			1 : (indexes.getColumnIndex() - 1) * characteristics.getNumRowBlocks() + indexes.getRowIndex() - 1;
 		return Math.toIntExact(index);
 	}
 }

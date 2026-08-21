@@ -57,6 +57,11 @@ public class OOCFuture<T> {
 		return future;
 	}
 
+	public static <T> OOCFuture<List<T>> allOf(List<? extends OOCFuture<? extends T>> futures) {
+		return allOf(futures, ignored -> {
+		});
+	}
+
 	public static <T> OOCFuture<List<T>> allOf(List<? extends OOCFuture<? extends T>> futures,
 		Consumer<? super T> failureCleanup) {
 		Objects.requireNonNull(futures);
