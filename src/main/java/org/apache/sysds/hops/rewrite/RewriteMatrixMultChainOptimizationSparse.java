@@ -31,6 +31,7 @@ import org.apache.sysds.hops.estim.MMNode;
 import org.apache.sysds.hops.estim.SparsityEstimator;
 import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.hops.estim.SparsityEstimator.OpCode;
+import org.apache.sysds.runtime.DMLRuntimeException;
 
 /**
  * Rule: Determine the optimal order of execution for a chain of
@@ -65,10 +66,10 @@ public class RewriteMatrixMultChainOptimizationSparse extends RewriteMatrixMultC
 			LOG.trace("Optimal Sparse MM Chain:");
 			mmChainRelinkHops(mmOperators.get(0), 0, size - 1, mmChain, mmOperators, new MutableInt(1), split, 1);
 		}
-		else if(dimsKnown) {
+		else if(dimsKnown && ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.SPARSITY_RECOMPILE)) {
 			LOG.debug("Input metadata is not available for sparsity rewrites. " +
-				"This could be resolved by pre-fetching data from disk during recompilation.");
-			// hop.setRequiresRecompile();
+				"Enabling dynamic recompilation to obtain metadata during sparsity-based recompilation.");
+			hop.setRequiresRecompile();
 		}
 	}
 	

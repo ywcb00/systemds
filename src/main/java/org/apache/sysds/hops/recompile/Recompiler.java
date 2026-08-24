@@ -390,8 +390,6 @@ public class Recompiler {
 		
 		// sparsity-based DAG recompilation if enabled
 		if(ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.SPARSITY_RECOMPILE)) {
-			// create deep copy of hops for in-place
-			Hop.resetVisitStatus(hops);
 			hops = SparsityDAGRecompiler.optimize(hops);
 		}
 

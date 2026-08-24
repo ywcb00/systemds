@@ -147,7 +147,6 @@ public class RewriteMatrixMultChainOptSparseTest extends AutomatedTestBase {
 			writeInputMatrixWithMTD("X", X, X_nnz, true);
 			writeInputMatrixWithMTD("Y", Y, Y_nnz, true);
 
-
 			//execute tests
 			TestAppender appender = LoggingUtils.overwrite(); // capture log output
 			runTest(true, false, null, -1);
