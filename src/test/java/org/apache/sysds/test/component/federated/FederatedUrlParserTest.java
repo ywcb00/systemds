@@ -21,9 +21,14 @@ package org.apache.sysds.test.component.federated;
 
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.test.FederatedWorkerUtils;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+import java.io.IOException;
+import java.net.ServerSocket;
 
 import org.junit.Test;
 
@@ -166,5 +171,31 @@ public class FederatedUrlParserTest
 		int IANA_limit = 49152;
 		assertTrue(defaultPort <= IANA_limit);
 		assertTrue(defaultPort > 0);
+	}
+
+	@Test
+	public void waitReturnsForAListeningPort() throws IOException {
+		try(ServerSocket listening = new ServerSocket(0)) {
+			// Return as soon as the port accepts, the timeout is only the upper bound.
+			FederatedWorkerUtils.waitForWorker(listening.getLocalPort(), 1000);
+		}
+	}
+
+	@Test
+	public void waitFailsFastWhenTheWorkerDied() throws IOException {
+		final int port;
+		try(ServerSocket closed = new ServerSocket(0)) {
+			port = closed.getLocalPort();
+		}
+		final long t0 = System.currentTimeMillis();
+		try {
+			FederatedWorkerUtils.waitForWorker(port, 1000, () -> false, "worker");
+			fail("expected the wait to report the dead worker");
+		}
+		catch(RuntimeException e) {
+			assertTrue(e.getMessage(), e.getMessage().contains("died before becoming ready"));
+			// Must not sit out the timeout, which is clamped up to a minute.
+			assertTrue("the dead worker was not reported promptly", System.currentTimeMillis() - t0 < 10000);
+		}
 	}
 }
