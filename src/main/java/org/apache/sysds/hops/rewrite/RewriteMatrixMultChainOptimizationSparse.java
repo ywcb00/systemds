@@ -31,7 +31,6 @@ import org.apache.sysds.hops.estim.MMNode;
 import org.apache.sysds.hops.estim.SparsityEstimator;
 import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.hops.estim.SparsityEstimator.OpCode;
-import org.apache.sysds.runtime.DMLRuntimeException;
 
 /**
  * Rule: Determine the optimal order of execution for a chain of

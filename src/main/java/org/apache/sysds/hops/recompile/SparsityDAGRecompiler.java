@@ -24,7 +24,7 @@ import org.apache.sysds.runtime.util.CollectionUtils;
 import org.apache.sysds.utils.Explain;
 
 public class SparsityDAGRecompiler {
-	private static final Log LOG = LogFactory.getLog(SparsityDAGRecompiler.class);
+	private static final Log LOG = LogFactory.getLog(SparsityDAGRecompiler.class.getName());
 
 	private final ExecutionContext _ec;
 
@@ -271,11 +271,13 @@ public class SparsityDAGRecompiler {
 		if(LOG.isTraceEnabled()) {
 			String offset = Explain.getIdentation(level);
 			LOG.trace(offset + "Hop " + hop.getName() + "(" + hop.getClass().getSimpleName() +
-				", " + hop.getHopID() + ")" + " " + hop.getDim1() + "x" + hop.getDim2());
+				", " + hop.getHopID() + ")" + " " + hop.getDim1() + "x" + hop.getDim2() +
+				"[nnz" + hop.getNnz() + "]");
 		}
 	}
 
 	/**
+	 * NOTE: Copied from RewriteMatrixMultChainOptimizationSparse.java
 	 * optimizeMMChain(): It optimizes the matrix multiplication chain in which
 	 * the last Hop is "hop". Step-1) Identify the chain (mmChain). (Step-2) clear all
 	 * links among the Hops that are involved in mmChain. (Step-3) Find the
