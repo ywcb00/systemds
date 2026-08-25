@@ -52,11 +52,11 @@ public class SparsityDAGRecompiler {
 	}
 
 	protected static void clearLinksWithinChain(Hop hop, List<Hop> operators) {
-		for(int i=0; i < operators.size(); i++) {
+		for(int i = 0; i < operators.size(); i++) {
 			Hop op = operators.get(i);
-			if(op.getInput().size() != 2 || (i != 0 && op.getParent().size() > 1 )) {
-				throw new HopsException(hop.printErrorLocation() +
-					"Unexpected error while applying sparsity-based recompilation on matrix-mult chain. \n");
+			if(op.getInput().size() != 2 || (i != 0 && op.getParent().size() > 1)) {
+				throw new HopsException(hop.printErrorLocation()
+					+ "Unexpected error while applying sparsity-based recompilation on matrix-mult chain. \n");
 			}
 			Hop input1 = op.getInput().get(0);
 			Hop input2 = op.getInput().get(1);
@@ -73,8 +73,8 @@ public class SparsityDAGRecompiler {
 	 * If all dimensions are known it returns true; othrewise the mmchain rewrite
 	 * should be ended without modifications.
 	 *
-	 * @param hop high-level operator
-	 * @param chain list of high-level operators
+	 * @param hop       high-level operator
+	 * @param chain     list of high-level operators
 	 * @param dimsArray dimension array
 	 * @return true if all dimensions known
 	 */
@@ -83,29 +83,29 @@ public class SparsityDAGRecompiler {
 
 		// Build the array containing dimensions from all matrices in the chain
 		// check the dimensions in the matrix chain to insure all dimensions are known
-		for( int i=0; i< chain.size(); i++ )
-			if( chain.get(i).getDim1() <= 0 || chain.get(i).getDim2() <= 0 )
+		for(int i = 0; i < chain.size(); i++)
+			if(chain.get(i).getDim1() <= 0 || chain.get(i).getDim2() <= 0)
 				dimsKnown = false;
 
 		if(dimsKnown) { // populate dims array if all dims known
-			for( int i = 0; i < chain.size(); i++ ) {
-				if (i == 0) {
+			for(int i = 0; i < chain.size(); i++) {
+				if(i == 0) {
 					dimsArray[i] = chain.get(i).getDim1();
-					if (dimsArray[i] <= 0) {
-						throw new HopsException(hop.printErrorLocation() +
-								"Hops::optimizeMMChain() : Invalid Matrix Dimension: "+ dimsArray[i]);
+					if(dimsArray[i] <= 0) {
+						throw new HopsException(hop.printErrorLocation()
+							+ "Hops::optimizeMMChain() : Invalid Matrix Dimension: " + dimsArray[i]);
 					}
 				}
-				else if (chain.get(i - 1).getDim2() != chain.get(i).getDim1()) {
-					throw new HopsException(hop.printErrorLocation() +
-						"Hops::optimizeMMChain() : Matrix Dimension Mismatch: " +
-						chain.get(i - 1).getDim2()+" != "+chain.get(i).getDim1());
+				else if(chain.get(i - 1).getDim2() != chain.get(i).getDim1()) {
+					throw new HopsException(
+						hop.printErrorLocation() + "Hops::optimizeMMChain() : Matrix Dimension Mismatch: "
+							+ chain.get(i - 1).getDim2() + " != " + chain.get(i).getDim1());
 				}
 
 				dimsArray[i + 1] = chain.get(i).getDim2();
-				if( dimsArray[i + 1] <= 0 ) {
-					throw new HopsException(hop.printErrorLocation() +
-							"Hops::optimizeMMChain() : Invalid Matrix Dimension: " + dimsArray[i + 1]);
+				if(dimsArray[i + 1] <= 0) {
+					throw new HopsException(hop.printErrorLocation()
+						+ "Hops::optimizeMMChain() : Invalid Matrix Dimension: " + dimsArray[i + 1]);
 				}
 			}
 		}
@@ -118,20 +118,19 @@ public class SparsityDAGRecompiler {
 	 * mmChainRelinkHops(): This method gets invoked after finding the optimal
 	 * order (split[][]) from dynamic programming. It relinks the Hops that are
 	 * part of the mmChain.
-	 * @param mmChain : basic operands in the entire matrix multiplication chain.
-	 * @param mmOperators : Hops that store the intermediate results in the chain.
-	 *                      For example: A = B %*% (C %*% D) there will be three
-	 *                      Hops in mmChain (B,C,D), and two Hops in mmOperators
-	 *                     (one for each * %*%).
-	 * @param h high level operator
-	 * @param i array index i
-	 * @param j array index j
-	 * @param opIndex operator index
-	 * @param split optimal order
-	 * @param level log level
+	 *
+	 * @param mmChain     : basic operands in the entire matrix multiplication chain.
+	 * @param mmOperators : Hops that store the intermediate results in the chain. For example: A = B %*% (C %*% D)
+	 *                    there will be three Hops in mmChain (B,C,D), and two Hops in mmOperators (one for each * %*%).
+	 * @param h           high level operator
+	 * @param i           array index i
+	 * @param j           array index j
+	 * @param opIndex     operator index
+	 * @param split       optimal order
+	 * @param level       log level
 	 */
-	protected final void mmChainRelinkHops(Hop h, int i, int j, List<Hop> mmChain,
-		List<Hop> mmOperators, MutableInt opIndex, int[][] split, int level) {
+	protected final void mmChainRelinkHops(Hop h, int i, int j, List<Hop> mmChain, List<Hop> mmOperators,
+		MutableInt opIndex, int[][] split, int level) {
 		// NOTE: the opIndex is a MutableInt in order to get the correct positions
 		// in ragged chains like ((((a, b), c), (D, E), f), e) that might be given
 		// like that by the original scripts variable assignments
@@ -141,7 +140,7 @@ public class SparsityDAGRecompiler {
 			return;
 		}
 
-		if(LOG.isTraceEnabled()){
+		if(LOG.isTraceEnabled()) {
 			String offset = Explain.getIdentation(level);
 			LOG.trace(offset + "(");
 		}
@@ -171,15 +170,13 @@ public class SparsityDAGRecompiler {
 		}
 
 		// Find children for both the inputs
-		mmChainRelinkHops(h.getInput().get(0), i, split[i][j],
-			mmChain, mmOperators, opIndex, split, level+1);
-		mmChainRelinkHops(h.getInput().get(1), split[i][j] + 1, j,
-			mmChain, mmOperators, opIndex, split, level+1);
+		mmChainRelinkHops(h.getInput().get(0), i, split[i][j], mmChain, mmOperators, opIndex, split, level + 1);
+		mmChainRelinkHops(h.getInput().get(1), split[i][j] + 1, j, mmChain, mmOperators, opIndex, split, level + 1);
 
 		// Propagate properties of input hops to current hop h
 		h.refreshSizeInformation();
 
-		if(LOG.isTraceEnabled()){
+		if(LOG.isTraceEnabled()) {
 			String offset = Explain.getIdentation(level);
 			LOG.trace(offset + ")");
 		}
@@ -193,7 +190,7 @@ public class SparsityDAGRecompiler {
 		boolean inputMetaAvail = getInputMatrixCharacteristics(hop, mmChain, sketchArray);
 		if(dimsKnown && inputMetaAvail) {
 			// Step 3: clear the links among Hops within the identified chain
-			clearLinksWithinChain ( hop, mmOperators );
+			clearLinksWithinChain(hop, mmOperators);
 
 			// Step 4: Find the optimal ordering via dynamic programming.
 
@@ -201,10 +198,9 @@ public class SparsityDAGRecompiler {
 			int size = mmChain.size();
 			int[][] split = mmChainDPSparse(dimsArray, sketchArray, mmChain.size());
 
-			 // Step 5: Relink the hops using the optimal ordering (split[][]) found from DP.
+			// Step 5: Relink the hops using the optimal ordering (split[][]) found from DP.
 			LOG.trace("Optimal Sparse MM Chain:");
-			mmChainRelinkHops(mmOperators.get(0), 0, size - 1, mmChain, mmOperators,
-				new MutableInt(1), split, 1);
+			mmChainRelinkHops(mmOperators.get(0), 0, size - 1, mmChain, mmOperators, new MutableInt(1), split, 1);
 		}
 	}
 
@@ -217,20 +213,20 @@ public class SparsityDAGRecompiler {
 	 * Introduction to Algorithms, Third Edition, MIT Press, page 395.
 	 */
 	private static int[][] mmChainDPSparse(double[] dimArray, MMNode[] sketchArray, int size) {
-		double[][] dpMatrix = new double[size][size]; //min cost table
-		MMNode[][] dpMatrixS = new MMNode[size][size]; //min sketch table
-		int[][] split = new int[size][size]; //min cost index table
+		double[][] dpMatrix = new double[size][size]; // min cost table
+		MMNode[][] dpMatrixS = new MMNode[size][size]; // min sketch table
+		int[][] split = new int[size][size]; // min cost index table
 
-		//init minimum costs for chains of length 1
-		for( int i = 0; i < size; i++ ) {
+		// init minimum costs for chains of length 1
+		for(int i = 0; i < size; i++) {
 			Arrays.fill(dpMatrix[i], 0);
 			Arrays.fill(split[i], -1);
 			dpMatrixS[i][i] = sketchArray[i];
 		}
 
-		//compute cost-optimal chains for increasing chain sizes
-		SparsityEstimator estim = EstimatorType.valueOf(ConfigurationManager.getDMLConfig()
-			.getTextValue(DMLConfig.SPARSITY_ESTIMATOR)).getEstimator();
+		// compute cost-optimal chains for increasing chain sizes
+		SparsityEstimator estim = EstimatorType
+			.valueOf(ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.SPARSITY_ESTIMATOR)).getEstimator();
 		for(int l = 2; l <= size; l++) { // chain length
 			for(int i = 0; i < size - l + 1; i++) {
 				int j = i + l - 1;
@@ -238,7 +234,7 @@ public class SparsityDAGRecompiler {
 				dpMatrix[i][j] = Double.MAX_VALUE;
 				for(int k = i; k <= j - 1; k++) {
 					// construct estimation nodes (w/ lazy propagation and memoization)
-					MMNode tmp = new MMNode(dpMatrixS[i][k], dpMatrixS[k+1][j], OpCode.MM);
+					MMNode tmp = new MMNode(dpMatrixS[i][k], dpMatrixS[k + 1][j], OpCode.MM);
 					estim.estim(tmp);
 
 					// recursive cost computation
@@ -248,7 +244,7 @@ public class SparsityDAGRecompiler {
 							tmp.getLeft().getRows() * tmp.getLeft().getCols() * tmp.getRight().getCols();
 
 					// prune suboptimal
-					if( cost < dpMatrix[i][j] ) {
+					if(cost < dpMatrix[i][j]) {
 						dpMatrix[i][j] = cost;
 						dpMatrixS[i][j] = tmp;
 						split[i][j] = k;
@@ -289,9 +285,9 @@ public class SparsityDAGRecompiler {
 	private static void logTraceHop(Hop hop, int level) {
 		if(LOG.isTraceEnabled()) {
 			String offset = Explain.getIdentation(level);
-			LOG.trace(offset + "Hop " + hop.getName() + "(" + hop.getClass().getSimpleName() +
-				", " + hop.getHopID() + ")" + " " + hop.getDim1() + "x" + hop.getDim2() +
-				"[nnz" + hop.getNnz() + "]");
+			LOG.trace(offset + "Hop " + hop.getName() + "(" + hop.getClass().getSimpleName()
+				+ ", " + hop.getHopID() + ")" + " " + hop.getDim1() + "x" + hop.getDim2()
+				+ "[nnz" + hop.getNnz() + "]");
 		}
 	}
 
@@ -307,9 +303,8 @@ public class SparsityDAGRecompiler {
 	 */
 	private void prepAndOptimizeMMChain(Hop hop) {
 		if(LOG.isTraceEnabled()) {
-			LOG.trace("Sparsity-based MM Chain Recompilation for HOP: (" +
-				hop.getClass().getSimpleName() + ", " + hop.getHopID() +
-				", " + hop.getName() + ")");
+			LOG.trace("Sparsity-based MM Chain Recompilation for HOP: (" + hop.getClass().getSimpleName() + ", "
+				+ hop.getHopID() + ", " + hop.getName() + ")");
 		}
 
 		List<Hop> mmChain = new ArrayList<>();
@@ -340,12 +335,10 @@ public class SparsityDAGRecompiler {
 			 *    (either within chain or outside the chain)
 			 */
 
-			if(HopRewriteUtils.isMatrixMultiply(h) &&
-				!((AggBinaryOp)h).hasLeftPMInput() && !h.isVisited()) {
+			if(HopRewriteUtils.isMatrixMultiply(h) && !((AggBinaryOp) h).hasLeftPMInput() && !h.isVisited()) {
 				// check if the output of "h" is used at multiple places. If yes, it can
 				// not be expanded.
-				expandable = !(h.getParent().size() > 1 ||
-					inputCount(h.getParent().get(0), h) > 1);
+				expandable = !(h.getParent().size() > 1 || inputCount(h.getParent().get(0), h) > 1);
 				if(!expandable) {
 					optimizeHopDAG(h);
 					break;
@@ -359,8 +352,8 @@ public class SparsityDAGRecompiler {
 				h.setVisited();
 				tempList = mmChain.get(i).getInput();
 				if(tempList.size() != 2) {
-					throw new HopsException(hop.printErrorLocation() +
-						"Hops::rule_OptimizeMMChain(): AggBinary must have exactly two inputs.");
+					throw new HopsException(hop.printErrorLocation()
+						+ "Hops::rule_OptimizeMMChain(): AggBinary must have exactly two inputs.");
 				}
 
 				// add current operator to mmOperators, and its input nodes to mmChain
@@ -397,7 +390,7 @@ public class SparsityDAGRecompiler {
 
 		// TODO: Optimize the hops that are not matrix multiplications. Its inputs are already optimized.
 		// (i.e., pre-fetching and pre-computations)
-		if(hop instanceof DataOp && ((DataOp)hop).isRead() && ((DataOp)hop).getNnz() < 0) {
+		if(hop instanceof DataOp && ((DataOp) hop).isRead() && ((DataOp) hop).getNnz() < 0) {
 			// TODO: pre-fetch
 		}
 		// TODO: pre-compute
@@ -408,7 +401,7 @@ public class SparsityDAGRecompiler {
 			return;
 
 		// TODO: Also rewrite chains with additional operations (e.g,. cbind, etc.)
-		if(HopRewriteUtils.isMatrixMultiply(hop) && !((AggBinaryOp)hop).hasLeftPMInput()) {
+		if(HopRewriteUtils.isMatrixMultiply(hop) && !((AggBinaryOp) hop).hasLeftPMInput()) {
 			// Try to find and optimize the chain in which current Hop is the
 			// last operator
 			prepAndOptimizeMMChain(hop);

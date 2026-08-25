@@ -66,8 +66,8 @@ public class RewriteMatrixMultChainOptimizationSparse extends RewriteMatrixMultC
 			mmChainRelinkHops(mmOperators.get(0), 0, size - 1, mmChain, mmOperators, new MutableInt(1), split, 1);
 		}
 		else if(dimsKnown && ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.SPARSITY_RECOMPILE)) {
-			LOG.debug("Input metadata is not available for sparsity rewrites. " +
-				"Enabling dynamic recompilation to obtain metadata during sparsity-based recompilation.");
+			LOG.debug("Input metadata is not available for sparsity rewrites. "
+				+ "Enabling dynamic recompilation to obtain metadata during sparsity-based recompilation.");
 			hop.setRequiresRecompile();
 		}
 	}
