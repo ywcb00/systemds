@@ -19,12 +19,18 @@ import org.apache.sysds.hops.estim.SparsityEstimator.OpCode;
 import org.apache.sysds.hops.estim.MMNode;
 import org.apache.sysds.hops.estim.SparsityEstimator;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
-import org.apache.sysds.runtime.meta.MatrixCharacteristics;
+import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.util.CollectionUtils;
 import org.apache.sysds.utils.Explain;
 
 public class SparsityDAGRecompiler {
 	private static final Log LOG = LogFactory.getLog(SparsityDAGRecompiler.class);
+
+	private final ExecutionContext _ec;
+
+	public SparsityDAGRecompiler(ExecutionContext ec) {
+		this._ec = ec;
+	}
 
 	protected static void clearLinksWithinChain(Hop hop, List<Hop> operators) {
 		for(int i=0; i < operators.size(); i++) {
@@ -361,14 +367,6 @@ public class SparsityDAGRecompiler {
 			optimizeMMChain(hop, mmChain, mmOperators);
 	}
 
-	private MatrixCharacteristics obtainMatrixCharacteristics(DataOp dop) {
-		// TODO: pre-fetch data from disk
-		System.out.println("SparsityDAGRecompiler.java:370 - Should prefetch read operation to obtain matrix characteristics w/ sparsity");
-		MatrixCharacteristics ret = (MatrixCharacteristics)(dop.getDataCharacteristics());
-		System.out.println("SparsityDAGRecompiler.java:372 - Known Matrix Characteristics: " + ret.toString());
-		return ret;
-	}
-
 	private void prepHop(Hop hop) {
 		hop.setVisited();
 
@@ -376,11 +374,12 @@ public class SparsityDAGRecompiler {
 		for(Hop hi : hop.getInput())
 			optimizeHopDAG(hi); // recursion
 
-		// TODO: Optimize the hop that is not a MatMult. Its inputs are already optimized.
+		// TODO: Optimize the hops that are not matrix multiplications. Its inputs are already optimized.
 		// (i.e., pre-fetching and pre-computations)
 		if(hop instanceof DataOp && ((DataOp)hop).isRead() && ((DataOp)hop).getNnz() < 0) {
-			obtainMatrixCharacteristics((DataOp)hop);
+			// TODO: pre-fetch
 		}
+		// TODO: pre-compute
 	}
 
 	private void optimizeHopDAG(Hop hop) {
@@ -407,8 +406,8 @@ public class SparsityDAGRecompiler {
 		return roots;
 	}
 
-	public static ArrayList<Hop> optimize(ArrayList<Hop> roots) {
-		SparsityDAGRecompiler spRecomp = new SparsityDAGRecompiler();
+	public static ArrayList<Hop> optimize(ArrayList<Hop> roots, ExecutionContext ec) {
+		SparsityDAGRecompiler spRecomp = new SparsityDAGRecompiler(ec);
 		Hop.resetVisitStatus(roots);
 		ArrayList<Hop> ret = spRecomp.optimizeHopDAGs(roots);
 		return ret;
