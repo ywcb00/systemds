@@ -106,14 +106,25 @@ public interface SettingsChecker {
 	}
 	
 	private static long maxMemMachineWin() {
+		//try modern powershell, otherwise wmic, log errors as warning but avoid crashes
+		long tmp = maxMemMachineWin(true);
+		if( tmp < 0 )
+			tmp = maxMemMachineWin(false);
+		return tmp;
+	}
+	
+	private static long maxMemMachineWin(boolean modern) {
+		int startIx = modern ? 3 : 1;
+		String command = modern ?
+			"powershell Get-CimInstance -ClassName Win32_PhysicalMemory | Select-Object Capacity" :
+			"wmic memorychip get capacity"; //in bytes
 		try {
-			String command = "wmic memorychip get capacity"; //in bytes
 			Runtime rt = Runtime.getRuntime();
 			Process pr = rt.exec(command);
 			String[] memStr = new String(pr.getInputStream().readAllBytes(), StandardCharsets.UTF_8).split("\n");
 			//skip header, and aggregate DIMM capacities
 			long capacity = 0;
-			for( int i=1; i<memStr.length; i++ ) {
+			for( int i=startIx; i<memStr.length; i++ ) {
 				String tmp = memStr[i].trim();
 				if( tmp.length() > 0 )
 					capacity += Long.parseLong(tmp);
@@ -121,7 +132,8 @@ public interface SettingsChecker {
 			return capacity;
 		}
 		catch(IOException e) {
-			throw new RuntimeException(e);
+			LOG.warn(e.getMessage());
+			return -1;
 		}
 	}
 
