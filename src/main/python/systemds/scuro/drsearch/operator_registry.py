@@ -47,7 +47,7 @@ class Registry:
 
     def set_fusion_operators(self, fusion_operators):
         if isinstance(fusion_operators, list):
-            self._context_operators = fusion_operators
+            self._fusion_operators = fusion_operators
         else:
             self._fusion_operators = [fusion_operators]
 
@@ -155,7 +155,7 @@ class Registry:
         return None, False
 
     def get_context_representations(self, modality_type):
-        return self._context_representation_operators[modality_type]
+        return self._context_representation_operators.get(modality_type, [])
 
     def get_context_lenghts_for_modality(self, modality_type, statistics):
         if modality_type == ModalityType.AUDIO:
@@ -176,7 +176,7 @@ class Registry:
             modality_type == ModalityType.TIMESERIES
             or modality_type == ModalityType.PHYSIOLOGICAL
         ):
-            window_lengths = [0.05, 0.1, 0.5, 0.75, 1, 2, 5, 10, 30, 60]  # seconds
+            window_lengths = [0.5, 0.75, 1, 2, 5, 10, 30, 60]  # seconds
 
         if modality_type == ModalityType.VIDEO:
             window_lengths = [0.5, 1, 2, 5, 10]  # seconds
@@ -198,7 +198,9 @@ class Registry:
                 math.ceil(statistics.avg_length / length)
                 for length in effective_window_lenghts
             ]
-            return effective_window_lenghts, num_windows
+            return self._drop_windows_below_min_count(
+                effective_window_lenghts, num_windows
+            )
 
         if modality_type == ModalityType.VIDEO:
             max_length_in_seconds = statistics.max_length / statistics.fps
@@ -213,7 +215,22 @@ class Registry:
                 math.ceil(statistics.avg_length / length)
                 for length in effective_window_lenghts
             ]
+            return self._drop_windows_below_min_count(
+                effective_window_lenghts, num_windows
+            )
+
+    MIN_TUNABLE_NUM_WINDOWS = 5
+
+    def _drop_windows_below_min_count(self, effective_window_lenghts, num_windows):
+        filtered = [
+            (length, count)
+            for length, count in zip(effective_window_lenghts, num_windows)
+            if count >= self.MIN_TUNABLE_NUM_WINDOWS and length >= 1
+        ]
+        if not filtered:
             return effective_window_lenghts, num_windows
+        lengths, counts = zip(*filtered)
+        return list(lengths), list(counts)
 
 
 def register_representation(modalities: Union[ModalityType, List[ModalityType]]):
