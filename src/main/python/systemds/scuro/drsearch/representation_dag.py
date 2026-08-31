@@ -577,15 +577,6 @@ def get_consumer_count(dags: List[RepresentationDag]) -> Dict[str, int]:
 
 
 def pushdown_aggregation(dag_group: List[RepresentationDag]) -> List[RepresentationDag]:
-    consumer_count: Dict[str, int] = defaultdict(int)
-
-    for dag in dag_group:
-        for node in dag.nodes:
-            for inp in node.inputs:
-                consumer_count[inp] += 1
-
-    processed_agg_ids: Set[str] = set()
-
     for dag in dag_group:
         agg_nodes = [
             n
@@ -593,10 +584,6 @@ def pushdown_aggregation(dag_group: List[RepresentationDag]) -> List[Representat
             if n.operation and issubclass(n.operation, AggregatedRepresentation)
         ]
         for agg_node in agg_nodes:
-            if agg_node.node_id in processed_agg_ids:
-                continue
-            processed_agg_ids.add(agg_node.node_id)
-
             if len(agg_node.inputs) != 1:
                 print(
                     f"Aggregation node {agg_node.node_id} has {len(agg_node.inputs)} inputs, skipping (SHOULD NOT HAPPEN)"
@@ -604,37 +591,22 @@ def pushdown_aggregation(dag_group: List[RepresentationDag]) -> List[Representat
                 continue
 
             input_id = agg_node.inputs[0]
-
-            processed_agg_ids.add(input_id)
-            if consumer_count[input_id] != 1:
-                continue
-
-            input_node = None
-            for d in dag_group:
-                input_node = d.get_node_by_id(input_id)
-                if input_node is not None:
-                    break
+            input_node = dag.get_node_by_id(input_id)
 
             if not input_node or not input_node.operation:
                 continue
 
-            op_instance = input_node.operation(params=input_node.parameters)
-            if op_instance.__class__.__bases__[0].__name__ != "BertFamily":
+            if not getattr(
+                input_node.operation, "supports_aggregation_pushdown", False
+            ):
                 continue
 
-            input_node.parameters["_pushdown_aggregation"] = agg_node.parameters
-
-            for d in dag_group:
-                for node in d.nodes:
-                    node.inputs = [
-                        input_id if inp == agg_node.node_id else inp
-                        for inp in node.inputs
-                    ]
-
-                if d.root_node_id == agg_node.node_id:
-                    d.root_node_id = input_id
-
-                d.nodes = [n for n in d.nodes if n.node_id != agg_node.node_id]
+            aggregation_parameters = copy.deepcopy(agg_node.parameters)
+            agg_node.operation = input_node.operation
+            agg_node.inputs = list(input_node.inputs)
+            agg_node.parameters = copy.deepcopy(input_node.parameters)
+            agg_node.parameters["_pushdown_aggregation"] = aggregation_parameters
+            dag.nodes = dag.filter_connected_nodes(dag.nodes)
 
     return dag_group
 
@@ -758,7 +730,7 @@ def group_dags_by_dependencies(
         return []
 
     unique_dags: List[RepresentationDag] = []
-    seen_signatures: set[Hashable] = set()
+    seen_signatures: Set[Hashable] = set()
 
     for dag in dags:
         dag_sig = dag.compute_full_node_signature(dag.root_node_id)

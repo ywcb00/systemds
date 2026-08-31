@@ -123,7 +123,7 @@ class CheckpointManager:
 
     def save_checkpoint(self, results: Any, extra_meta: Dict[str, Any] = {}):
         meta = {"eval_count": self.eval_count}
-        # meta.update(extra_meta or {})
+        meta.update(extra_meta or {})
         self.save(results, meta)
 
     def checkpoint_if_due(self, results: Any, extra_meta: Dict[str, Any] = None):

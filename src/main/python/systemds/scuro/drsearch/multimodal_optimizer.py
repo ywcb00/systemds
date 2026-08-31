@@ -33,7 +33,6 @@ from systemds.scuro.drsearch.representation_dag import (
 from systemds.scuro.representations.aggregated_representation import (
     AggregatedRepresentation,
 )
-from systemds.scuro.representations.aggregate import Aggregation
 from systemds.scuro.drsearch.operator_registry import Registry
 from systemds.scuro.utils.schema_helpers import get_shape
 
@@ -69,10 +68,9 @@ def _evaluate_dag_worker(dag_pickle, task_pickle, modalities_pickle, debug=False
         from systemds.scuro.representations.aggregated_representation import (
             AggregatedRepresentation,
         )
-        from systemds.scuro.representations.aggregate import Aggregation
 
         if task.expected_dim == 1 and get_shape(final_representation.metadata) > 1:
-            agg_operator = AggregatedRepresentation(Aggregation())
+            agg_operator = AggregatedRepresentation()
             final_representation = agg_operator.transform(final_representation)
 
         eval_start = time.time()
@@ -424,7 +422,7 @@ class MultimodalOptimizer:
                 return None
 
             if task.expected_dim == 1 and get_shape(fused_representation.metadata) > 1:
-                agg_operator = AggregatedRepresentation(Aggregation())
+                agg_operator = AggregatedRepresentation()
                 fused_representation = agg_operator.transform(fused_representation)
 
             eval_start = time.time()

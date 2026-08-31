@@ -24,7 +24,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 
-from systemds.scuro.dataloader.base_loader import BaseLoader
+from systemds.scuro.dataloader.base_loader import BaseLoader, LazyFileSequence
 import cv2
 from systemds.scuro.modality.type import ModalityType
 
@@ -55,21 +55,34 @@ class ImageLoader(BaseLoader):
             source_path, indices, data_type, chunk_size, ModalityType.IMAGE, ext
         )
         self.load_data_from_file = load
+        self._all_metadata = []
         self.stats = self.get_stats(source_path)
 
-    def extract(self, file: str, index: Optional[Union[str, List[str]]] = None):
-        self.file_sanity_check(file)
+    def load(self):
+        if self.chunk_size:
+            return super().load()
 
+        self.data = LazyFileSequence(
+            self.get_file_names(self.indices), self._decode_file
+        )
+        self.metadata = self._all_metadata.copy()
+        return self.data, self.metadata
+
+    def _decode_file(self, file: str):
+        self.file_sanity_check(file)
         image = cv2.imread(file, cv2.IMREAD_COLOR)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if image is None:
+            raise ValueError(f"Could not read image at path: {file}")
+        return cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.uint8, copy=False)
+
+    def extract(self, file: str, index: Optional[Union[str, List[str]]] = None):
+        image = self._decode_file(file)
 
         if image.ndim == 2:
             height, width = image.shape
             channels = 1
         else:
             height, width, channels = image.shape
-
-        image = image.astype(np.uint8, copy=False)
 
         self.metadata.append(
             self.modality_type.create_metadata(width, height, channels)
@@ -78,6 +91,7 @@ class ImageLoader(BaseLoader):
         self.data.append(image)
 
     def get_stats(self, source_path: str):
+        self._all_metadata = []
         max_width = 0
         max_height = 0
         max_channels = 0
@@ -87,18 +101,15 @@ class ImageLoader(BaseLoader):
         average_channels = 0
         for file in self.indices:
             path = os.path.join(source_path, f"{file}{self._ext}")
-            # if self.chunk_size is None:
-            #     self.extract(path)
-            #     md = self.metadata[path]
-            #     max_width = max(max_width, md["width"])
-            #     max_height = max(max_height, md["height"])
-            #     max_channels = max(max_channels, md["num_channels"])
-            #     num_instances += 1
-            # else:
             self.file_sanity_check(path)
             image = cv2.imread(path, cv2.IMREAD_COLOR)
+            if image is None:
+                raise ValueError(f"Could not read image at path: {path}")
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             height, width, channels = image.shape
+            self._all_metadata.append(
+                self.modality_type.create_metadata(width, height, channels)
+            )
             max_width = max(max_width, width)
             max_height = max(max_height, height)
             max_channels = max(max_channels, channels)
@@ -119,3 +130,15 @@ class ImageLoader(BaseLoader):
             average_height,
             average_channels,
         )
+
+    def estimate_peak_memory_bytes(self) -> dict:
+        n = self.chunk_size if self.chunk_size is not None else 1
+        per_instance = (
+            self.stats.average_width
+            * self.stats.average_height
+            * self.stats.average_channels
+        )
+        return {
+            "cpu_peak_bytes": int(n * per_instance * np.dtype(np.uint8).itemsize),
+            "gpu_peak_bytes": 0,
+        }

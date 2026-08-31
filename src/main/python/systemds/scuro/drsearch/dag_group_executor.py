@@ -25,7 +25,7 @@ import pickle
 
 import time
 from typing import Any, Dict, List, Optional
-from systemds.scuro import Modality
+from systemds.scuro.modality.modality import Modality
 from systemds.scuro.drsearch.representation_dag import (
     LRUCache,
     RepresentationDag,

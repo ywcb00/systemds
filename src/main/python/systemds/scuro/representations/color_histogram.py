@@ -35,7 +35,7 @@ from systemds.scuro.utils.static_variables import (
 )
 
 
-@register_representation(ModalityType.IMAGE)
+@register_representation([ModalityType.IMAGE, ModalityType.VIDEO])
 class ColorHistogram(UnimodalRepresentation):
     def __init__(
         self,
@@ -70,6 +70,11 @@ class ColorHistogram(UnimodalRepresentation):
         }
 
     def compute_histogram(self, image):
+        if np.issubdtype(image.dtype, np.floating):
+            if image.size and image.min() >= 0 and image.max() <= 1:
+                image = image * 255
+            image = np.clip(image, 0, 255).astype(np.uint8)
+
         if self.color_space == "HSV":
             img = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
             channels = [0, 1, 2]

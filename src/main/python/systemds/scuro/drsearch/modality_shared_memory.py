@@ -275,6 +275,12 @@ class SharedArrayList(list):
         state["_buffer"] = None
         return state
 
+    def __reduce_ex__(self, protocol):
+        return (
+            type(self),
+            (self.shm_name, self.dtype_str, self.offsets, self.total_elems),
+        )
+
 
 def _is_string_list_shared_memory_candidate(data: Any) -> bool:
     if not isinstance(data, list) or not data:

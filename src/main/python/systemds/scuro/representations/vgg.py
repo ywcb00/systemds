@@ -27,7 +27,6 @@ from typing import Tuple, Any
 from systemds.scuro.drsearch.operator_registry import register_representation
 import torch.utils.data
 import torch
-import re
 import torchvision.models as models
 import numpy as np
 from systemds.scuro.modality.type import ModalityType
@@ -36,6 +35,14 @@ from systemds.scuro.utils.static_variables import (
 )
 from systemds.scuro.dataloader.image_loader import ImageStats
 from systemds.scuro.representations.representation import RepresentationStats
+from systemds.scuro.representations.utils import (
+    OwnerAccumulator,
+    flatten_owned_sequences,
+    get_sequence_lengths,
+    inference_context,
+    move_batch_to_device,
+    pin_memory_for,
+)
 
 
 class Identity(torch.nn.Module):
@@ -45,18 +52,25 @@ class Identity(torch.nn.Module):
 
 @register_representation([ModalityType.IMAGE, ModalityType.VIDEO])
 class VGG19(UnimodalRepresentation):
+    supports_aggregation_pushdown = True
+    cache_in_worker = True
+
     def __init__(
         self, layer="classifier.0", output_file=None, params=None, batch_size=32
     ):
         self.data_type = torch.bfloat16
         self.model = None
+        self._activation_hook = None
+        self.activation = None
         self.gpu_id = None
         self.device = get_device()
         self.model = models.vgg19(weights=models.VGG19_Weights.DEFAULT)
         self.model = self.model.to(self.device)
         parameters = self._get_parameters()
         super().__init__("VGG19", ModalityType.EMBEDDING, parameters)
+        self.params = params
         if params is not None:
+            batch_size = int(params.get("batch_size", batch_size))
             layer = params.get("layer_name", layer)
         self.output_file = output_file
         self.layer_name = layer
@@ -81,27 +95,28 @@ class VGG19(UnimodalRepresentation):
 
     def _get_parameters(self):
         parameters = {
+            "batch_size": [1, 2, 4, 8, 16, 32, 64, 128],
             "layer_name": [
                 "features.35",
                 "classifier.0",
                 "classifier.3",
                 "classifier.6",
-            ]
+            ],
         }
-
         return parameters
 
     def estimate_output_memory_bytes(self, input_stats: ImageStats) -> int:
-        if isinstance(input_stats, VideoStats):
-            return (
-                input_stats.num_instances
-                * input_stats.max_length
-                * 4096
-                * np.dtype(np.float32).itemsize
-            )
-        return input_stats.num_instances * 4096 * np.dtype(np.float32).itemsize
+        shape = self.get_output_stats(input_stats).output_shape
+        return int(
+            input_stats.num_instances * np.prod(shape) * np.dtype(np.float32).itemsize
+        )
 
     def get_output_stats(self, input_stats) -> RepresentationStats:
+        if self.params and "_pushdown_aggregation" in self.params:
+            return RepresentationStats(
+                input_stats.num_instances, (4096,), aggregate_dim=None
+            )
+
         if isinstance(input_stats, VideoStats):
             return RepresentationStats(
                 input_stats.num_instances,
@@ -121,10 +136,12 @@ class VGG19(UnimodalRepresentation):
             * input_stats.max_channels
             * self.data_type.itemsize
         )
-        model = models.vgg19(weights=models.VGG19_Weights.DEFAULT)
-        param_bytes = sum(p.numel() for p in model.parameters())
-        buffer_bytes = sum(b.numel() for b in model.buffers())
-        model_size_bytes = param_bytes * 4 + buffer_bytes * 4
+        model_size_bytes = sum(
+            p.nelement() * p.element_size() for p in self.model.parameters()
+        )
+        model_size_bytes += sum(
+            b.nelement() * b.element_size() for b in self.model.buffers()
+        )
 
         return {
             "cpu_peak_bytes": (
@@ -150,84 +167,68 @@ class VGG19(UnimodalRepresentation):
         self.data_type = torch.float32
         if next(self.model.parameters()).dtype != self.data_type:
             self.model = self.model.to(self.data_type)
-
-        self.activations = {}
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        self.activation = None
 
         def get_activation(name_):
             def hook(
                 _module: torch.nn.Module, input_: Tuple[torch.Tensor], output: Any
             ):
-                self.activations[name_] = output
+                self.activation = output
 
             return hook
 
-        digit = re.findall(r"\d+", self.layer_name)[0]
-        if "feature" in self.layer_name:
-            self.model.features[int(digit)].register_forward_hook(
-                get_activation(self.layer_name)
-            )
+        if self._activation_hook is None:
+            for name, layer in self.model.named_modules():
+                if name == self.layer_name:
+                    self._activation_hook = layer.register_forward_hook(
+                        get_activation(name)
+                    )
+                    break
+
+        is_image = modality.modality_type == ModalityType.IMAGE
+        if is_image:
+            samples = modality.data
+            owner_ids = list(range(len(samples)))
         else:
-            self.model.classifier[int(digit)].register_forward_hook(
-                get_activation(self.layer_name)
-            )
-        is_image = len(modality.data[0].shape) == 3
-        embeddings = (
-            self._transform_image_modality(modality)
-            if is_image
-            else self._transform_video_modality(modality)
+            lengths = get_sequence_lengths(modality.data, modality.metadata)
+            samples, owner_ids = flatten_owned_sequences(modality.data, lengths)
+
+        dataset = CustomDataset(samples, self.data_type, "cpu")
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin_memory_for(self.device),
         )
+        owner_by_chunk = torch.tensor(owner_ids, dtype=torch.long)
+        accumulator = OwnerAccumulator(len(modality.data), len(dataset), aggregation)
+
+        with inference_context(self.device):
+            for batch in dataloader:
+                chunk_ids = batch["id"].long()
+                batch = move_batch_to_device(batch, self.device)
+                _ = self.model(batch["data"])
+                output = self.activation
+                if output.ndim > 2:
+                    output = torch.nn.functional.adaptive_avg_pool2d(output, (1, 1))
+                accumulator.update(
+                    torch.flatten(output, 1),
+                    owner_by_chunk.index_select(0, chunk_ids),
+                    chunk_ids,
+                )
+
+        embeddings = accumulator.finalize(grouped=not is_image and aggregation is None)
+        if is_image and aggregation is None:
+            embeddings = np.asarray(embeddings)
 
         transformed_modality = TransformedModality(
             modality, self, self.output_modality_type
         )
-
+        transformed_modality.data_type = np.float32
+        transformed_modality.aggregate_dim = (
+            None if aggregation is not None or is_image else (0,)
+        )
         transformed_modality.data = embeddings
-
         return transformed_modality
-
-    def _transform_image_modality(self, modality):
-        dataset = CustomDataset(modality.data, self.data_type, self.device)
-        embeddings = []
-        for instance in torch.utils.data.DataLoader(dataset, self.batch_size):
-            frames = instance["data"]
-
-            _ = self.model(frames)
-            output = self.activations[self.layer_name]
-
-            if len(output.shape) == 4:
-                output = torch.nn.functional.adaptive_avg_pool2d(output, (1, 1))
-
-            embeddings.extend(output.detach().cpu().float().numpy().astype(np.float32))
-
-        return np.array(embeddings)
-
-    def _transform_video_modality(self, modality):
-        dataset = CustomDataset(modality.data, self.data_type, self.device)
-        embeddings = {}
-        for instance in torch.utils.data.DataLoader(dataset):
-            video_id = instance["id"][0]
-            frames = instance["data"][0]
-            embeddings[video_id] = []
-
-            for start_index in range(0, frames.shape[0], self.batch_size):
-                end_index = min(start_index + self.batch_size, frames.shape[0])
-                frame_batch = frames[start_index:end_index]
-
-                _ = self.model(frame_batch)
-                output = self.activations[self.layer_name]
-
-                if len(output.shape) == 4:
-                    output = torch.nn.functional.adaptive_avg_pool2d(output, (1, 1))
-
-                embeddings[video_id].extend(
-                    torch.flatten(output, 1)
-                    .detach()
-                    .cpu()
-                    .float()
-                    .numpy()
-                    .astype(np.float32)
-                )
-
-            embeddings[video_id] = np.array(embeddings[video_id])
-
-        return list(embeddings.values())

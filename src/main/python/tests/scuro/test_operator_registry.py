@@ -75,7 +75,10 @@ from systemds.scuro.representations.max import RowMax
 from systemds.scuro.representations.mel_spectrogram import MelSpectrogram
 from systemds.scuro.representations.spectrogram import Spectrogram
 from systemds.scuro.representations.hadamard import Hadamard
+from systemds.scuro.representations.image_bind import ImageBind
 from systemds.scuro.representations.resnet import ResNet
+from systemds.scuro.representations.openface import OpenFace
+from systemds.scuro.representations.color_histogram import ColorHistogram
 from systemds.scuro.representations.multimodal_attention_fusion import AttentionFusion
 from systemds.scuro.representations.physiological_window import (
     AdaptiveWindow,
@@ -89,6 +92,7 @@ class TestOperatorRegistry(unittest.TestCase):
         assert registry.get_representations(ModalityType.AUDIO) == [
             MelSpectrogram,
             MFCC,
+            ImageBind,
             Spectrogram,
             Wav2Vec,
             Spectral,
@@ -101,8 +105,11 @@ class TestOperatorRegistry(unittest.TestCase):
         registry = Registry()
         assert registry.get_representations(ModalityType.VIDEO) == [
             ResNet,
+            OpenFace,
+            ImageBind,
             SwinVideoTransformer,
             X3D,
+            ColorHistogram,
             VGG19,
             CLIPVisual,
         ]

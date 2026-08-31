@@ -76,13 +76,13 @@ class TestDataLoader(BaseLoader):
                 30,
                 max(d.shape[0] for d in data),
                 sum(d.shape[0] for d in data) / len(data),
-                max(d.shape[1] for d in data),
                 max(d.shape[2] for d in data),
+                max(d.shape[1] for d in data),
                 max(d.shape[3] for d in data),
                 chunk_size if chunk_size is not None else len(data),
                 len(data),
             )
-        elif modality_type == ModalityType.TIMESERIES:
+        elif modality_type in (ModalityType.TIMESERIES, ModalityType.PHYSIOLOGICAL):
             self.stats = TimeseriesStats(
                 max(len(d) for d in data),
                 len(data),
@@ -94,8 +94,8 @@ class TestDataLoader(BaseLoader):
             )
         elif modality_type == ModalityType.IMAGE:
             self.stats = ImageStats(
-                max(d.shape[0] for d in data),
                 max(d.shape[1] for d in data),
+                max(d.shape[0] for d in data),
                 max(d.shape[2] for d in data),
                 len(data),
                 (
@@ -103,8 +103,8 @@ class TestDataLoader(BaseLoader):
                     max(d.shape[1] for d in data),
                     max(d.shape[2] for d in data),
                 ),
-                average_width=sum(d.shape[0] for d in data) / len(data),
-                average_height=sum(d.shape[1] for d in data) / len(data),
+                average_width=sum(d.shape[1] for d in data) / len(data),
+                average_height=sum(d.shape[0] for d in data) / len(data),
                 average_channels=sum(d.shape[2] for d in data) / len(data),
             )
 
@@ -251,6 +251,43 @@ class ModalityRandomDataGenerator:
             self.modality_type.create_metadata(
                 [f"feature_{j}" for j in range(num_features)], data[i]
             )
+            for i in range(num_instances)
+        ]
+        return data, self.metadata
+
+    def create_physiological_data(
+        self, num_instances, sequence_length, kind="ecg", fs=500.0
+    ):
+        self.modality_type = ModalityType.PHYSIOLOGICAL
+        rng = np.random.default_rng(7)
+        data = []
+
+        for _ in range(num_instances):
+            t = np.arange(sequence_length) / fs
+            samples = np.arange(sequence_length)
+            if kind == "ecg":
+                signal = rng.normal(0.0, 0.01, sequence_length)
+                width = max(1.0, 0.02 * fs)
+                position = int(0.2 * fs)
+                while position < sequence_length:
+                    signal += np.exp(-(((samples - position) / width) ** 2))
+                    position += int(rng.uniform(0.7, 0.9) * fs)
+            elif kind == "eda":
+                signal = 0.5 + 0.01 * t + rng.normal(0.0, 0.005, sequence_length)
+                width = max(1.0, 1.5 * fs)
+                for peak_time in np.arange(5.0, max(t[-1], 5.0), 10.0):
+                    centre = peak_time * fs
+                    signal += np.exp(-(((samples - centre) / width) ** 2))
+            elif kind == "resp":
+                signal = np.sin(2 * np.pi * 0.25 * t) + rng.normal(
+                    0.0, 0.02, sequence_length
+                )
+            else:
+                raise ValueError(f"Unsupported physiological signal kind: {kind}")
+            data.append(signal.astype(self.data_type))
+
+        self.metadata = [
+            self.modality_type.create_metadata(["signal"], data[i])
             for i in range(num_instances)
         ]
         return data, self.metadata

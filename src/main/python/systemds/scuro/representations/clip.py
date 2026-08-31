@@ -19,14 +19,25 @@
 #
 # -------------------------------------------------------------
 import numpy as np
+import torch
 from torchvision import transforms
 
 from systemds.scuro.dataloader.video_loader import VideoStats
 from systemds.scuro.modality.transformed import TransformedModality
 from systemds.scuro.representations.representation import RepresentationStats
 from systemds.scuro.representations.unimodal import UnimodalRepresentation
-import torch
-from systemds.scuro.representations.utils import save_embeddings
+from systemds.scuro.representations.utils import (
+    LengthBucketBatchSampler,
+    OwnerAccumulator,
+    OwnedSequenceDataset,
+    flatten_owned_sequences,
+    get_sequence_lengths,
+    move_batch_to_device,
+    pin_memory_for,
+    pool_transformer_output,
+    save_embeddings,
+    transformer_inference_context,
+)
 from systemds.scuro.modality.type import ModalityType
 from systemds.scuro.drsearch.operator_registry import register_representation
 from transformers import CLIPProcessor, CLIPModel
@@ -49,9 +60,14 @@ from torch.utils.data import DataLoader
 
 @register_representation([ModalityType.VIDEO, ModalityType.IMAGE])
 class CLIPVisual(UnimodalRepresentation):
+    supports_aggregation_pushdown = True
+    cache_in_worker = True
+
     def __init__(self, output_file=None, batch_size=32, layer_name="", params=None):
         parameters = self._get_parameters()
         super().__init__("CLIPVisual", ModalityType.EMBEDDING, parameters)
+        self.params = params
+        self._activation_hook = None
         self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         if params is not None:
@@ -99,9 +115,17 @@ class CLIPVisual(UnimodalRepresentation):
         return parameters
 
     def estimate_output_memory_bytes(self, input_stats) -> int:
-        return input_stats.num_instances * 512 * self.data_type.itemsize
+        shape = self.get_output_stats(input_stats).output_shape
+        return int(input_stats.num_instances * np.prod(shape) * self.data_type.itemsize)
 
     def get_output_stats(self, input_stats) -> RepresentationStats:
+        if self.params and "_pushdown_aggregation" in self.params:
+            return RepresentationStats(
+                input_stats.num_instances,
+                (512,),
+                aggregate_dim=None,
+                dtype=self.data_type,
+            )
         if isinstance(input_stats, VideoStats):
             return RepresentationStats(
                 input_stats.num_instances,
@@ -219,32 +243,38 @@ class CLIPVisual(UnimodalRepresentation):
             self.model = self.model.to(self.data_type)
 
         self.model = self.model.to(self.device)
+        self.model.eval()
         self.clip_output = None
 
         def get_activation(name):
             def hook(model, input, output):
-                self.clip_output = (
-                    output[0].detach() if isinstance(output, tuple) else output.detach()
-                )
+                self.clip_output = output[0] if isinstance(output, tuple) else output
 
             return hook
 
-        if self.layer_name != "":
+        if self.layer_name != "" and self._activation_hook is None:
             for name, layer in self.model.vision_model.named_modules():
                 if name == self.layer_name:
-                    layer.register_forward_hook(get_activation(name))
+                    self._activation_hook = layer.register_forward_hook(
+                        get_activation(name)
+                    )
                     break
 
-        embeddings = self.create_visual_embeddings(modality)
+        embeddings = self.create_visual_embeddings(modality, aggregation)
 
         if self.output_file is not None:
             save_embeddings(embeddings, self.output_file)
 
+        transformed_modality.data_type = np.float32
+        transformed_modality.aggregate_dim = (
+            None
+            if aggregation is not None or modality.modality_type == ModalityType.IMAGE
+            else (0,)
+        )
         transformed_modality.data = embeddings
         return transformed_modality
 
-    def create_visual_embeddings(self, modality):
-
+    def create_visual_embeddings(self, modality, aggregation=None):
         clip_transform = transforms.Compose(
             [
                 transforms.ToPILImage(),
@@ -254,74 +284,48 @@ class CLIPVisual(UnimodalRepresentation):
                 transforms.ConvertImageDtype(dtype=self.data_type),
             ]
         )
-        dataset = CustomDataset(modality.data, self.data_type, "cpu", tf=clip_transform)
+        is_image = modality.modality_type == ModalityType.IMAGE
+        if is_image:
+            samples = modality.data
+            owner_ids = list(range(len(samples)))
+        else:
+            lengths = get_sequence_lengths(modality.data, modality.metadata)
+            samples, owner_ids = flatten_owned_sequences(modality.data, lengths)
 
-        embeddings = {}
-        if modality.modality_type == ModalityType.IMAGE:
-            embeddings = []
-            for batch in torch.utils.data.DataLoader(
-                dataset, batch_size=self.batch_size
-            ):
-                images = batch["data"]
+        dataset = CustomDataset(samples, self.data_type, "cpu", tf=clip_transform)
+        dataloader = DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin_memory_for(self.device),
+        )
+        owner_by_chunk = torch.tensor(owner_ids, dtype=torch.long)
+        accumulator = OwnerAccumulator(len(modality.data), len(dataset), aggregation)
+
+        with transformer_inference_context(self.device):
+            for batch in dataloader:
+                chunk_ids = batch["id"].long()
                 inputs = self.processor(
-                    images=images, return_tensors="pt", do_rescale=False
+                    images=batch["data"], return_tensors="pt", do_rescale=False
                 )
-                inputs.to(self.device)
-
-                with torch.no_grad():
-                    if self.layer_name != "":
-                        _ = self.model.vision_model(**inputs)
-                        output = self.clip_output
-                    else:
-                        output = self.model.get_image_features(**inputs)
+                inputs = move_batch_to_device(dict(inputs), self.device)
+                if self.layer_name != "":
+                    _ = self.model.vision_model(**inputs)
+                    output = self.clip_output
+                else:
+                    output = self.model.get_image_features(**inputs)
 
                 output = self._pool_visual_output(output)
-
-                embeddings.extend(
-                    torch.flatten(output, 1)
-                    .detach()
-                    .cpu()
-                    .float()
-                    .numpy()
-                    .astype(np.float32)
-                )
-            return embeddings
-
-        for instance in torch.utils.data.DataLoader(dataset):
-            id = int(instance["id"][0])
-            frames = instance["data"][0]
-            embeddings[id] = []
-            batch_size = self.batch_size
-
-            for start_index in range(0, len(frames), batch_size):
-                end_index = min(start_index + batch_size, len(frames))
-                frame_ids_range = range(start_index, end_index)
-                frame_batch = frames[frame_ids_range]
-
-                inputs = self.processor(
-                    images=frame_batch, return_tensors="pt", do_rescale=False
-                )
-                inputs.to(self.device)
-                with torch.no_grad():
-                    if self.layer_name != "":
-                        _ = self.model.vision_model(**inputs)
-                        output = self.clip_output
-                    else:
-                        output = self.model.get_image_features(**inputs)
-
-                output = self._pool_visual_output(output)
-
-                embeddings[id].extend(
-                    torch.flatten(output, 1)
-                    .detach()
-                    .cpu()
-                    .float()
-                    .numpy()
-                    .astype(np.float32)
+                accumulator.update(
+                    torch.flatten(output, 1),
+                    owner_by_chunk.index_select(0, chunk_ids),
+                    chunk_ids,
                 )
 
-            embeddings[id] = np.array(embeddings[id])
-        return list(embeddings.values())
+        embeddings = accumulator.finalize(grouped=not is_image and aggregation is None)
+        if is_image and aggregation is None:
+            return list(embeddings)
+        return embeddings
 
     def _pool_visual_output(self, output: torch.Tensor) -> torch.Tensor:
         if output.ndim == 4:
@@ -336,6 +340,9 @@ class CLIPVisual(UnimodalRepresentation):
 
 @register_representation(ModalityType.TEXT)
 class CLIPText(UnimodalRepresentation):
+    supports_aggregation_pushdown = True
+    cache_in_worker = True
+
     def __init__(self, output_file=None, batch_size=32, layer_name="", params=None):
         if params is not None:
             self.batch_size = int(params.get("batch_size", batch_size))
@@ -356,6 +363,7 @@ class CLIPText(UnimodalRepresentation):
         self.gpu_id = None
         self.device = get_device()
         self.params = params
+        self._activation_hook = None
 
     @property
     def gpu_id(self):
@@ -400,17 +408,14 @@ class CLIPText(UnimodalRepresentation):
             self.stats = RepresentationStats(
                 input_stats.num_instances,
                 (512,),
-                aggregate_dim=(0,),
+                aggregate_dim=None,
                 dtype=self.data_type,
             )
         else:
             self.stats = RepresentationStats(
                 input_stats.num_instances,
                 (input_stats.output_shape[0], 512),
-                aggregate_dim=(
-                    0,
-                    1,
-                ),
+                aggregate_dim=(0,),
                 dtype=self.data_type,
             )
         if self.params and "_pushdown_aggregation" in self.params:
@@ -480,72 +485,120 @@ class CLIPText(UnimodalRepresentation):
         transformed_modality = TransformedModality(
             modality, self, self.output_modality_type
         )
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+        if self.processor is None:
+            self.processor = CLIPProcessor.from_pretrained(
+                "openai/clip-vit-base-patch32"
+            )
+        if self.model is None:
+            self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         self.model = self.model.to(self.device)
+        self.model.eval()
         self.clip_output = None
 
         def get_activation(name):
             def hook(model, input, output):
-                self.clip_output = (
-                    output[0].detach() if isinstance(output, tuple) else output.detach()
-                )
+                self.clip_output = output[0] if isinstance(output, tuple) else output
 
             return hook
 
-        if self.layer_name != "":
+        if self.layer_name != "" and self._activation_hook is None:
             for name, layer in self.model.text_model.named_modules():
                 if name == self.layer_name:
-                    layer.register_forward_hook(get_activation(name))
+                    self._activation_hook = layer.register_forward_hook(
+                        get_activation(name)
+                    )
                     break
 
+        aggregate_dim = None
         if ModalityType.TEXT.has_field(modality.metadata, "text_spans"):
-            dataset = TextSpanDataset(modality.data, modality.metadata)
-            embeddings = []
-            for text_chunks in dataset:
-                embedding = self.create_text_embeddings(
-                    text_chunks, self.model, aggregation
-                )
-                embeddings.append(embedding)
-        else:
+            chunk_groups = list(TextSpanDataset(modality.data, modality.metadata))
+            chunks, owner_ids = flatten_owned_sequences(chunk_groups)
+            aggregate_dim = None if aggregation is not None else (0,)
             embeddings = self.create_text_embeddings(
-                modality.data, self.model, aggregation
+                chunks,
+                self.model,
+                aggregation,
+                owner_ids=owner_ids,
+                num_owners=len(chunk_groups),
+                grouped=aggregation is None,
             )
+        else:
+            embeddings = self.create_text_embeddings(modality.data, self.model)
 
         if self.output_file is not None:
             save_embeddings(embeddings, self.output_file)
 
+        transformed_modality.data_type = np.float32
+        transformed_modality.aggregate_dim = aggregate_dim
         transformed_modality.data = embeddings
         return transformed_modality
 
-    def create_text_embeddings(self, data, model, aggregation=None):
-        dataset = TextDataset(data)
-        dataloader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=False, collate_fn=None
+    def create_text_embeddings(
+        self,
+        data,
+        model,
+        aggregation=None,
+        owner_ids=None,
+        num_owners=None,
+        grouped=False,
+    ):
+        texts = list(TextDataset(data))
+        single_owner = owner_ids is None and aggregation is not None
+        if owner_ids is None:
+            owner_ids = [0] * len(texts) if single_owner else range(len(texts))
+        if num_owners is None:
+            num_owners = 1 if single_owner else len(texts)
+        dataset = OwnedSequenceDataset(texts, owner_ids)
+
+        length_encoding = self.processor(
+            text=texts,
+            padding=False,
+            truncation=True,
+            max_length=self.max_seq_length,
         )
-        embeddings = []
-        for batch in dataloader:
+        attention_mask = length_encoding.get("attention_mask")
+        if isinstance(attention_mask, torch.Tensor):
+            lengths = attention_mask.sum(dim=1).tolist()
+        else:
+            lengths = [sum(mask) for mask in attention_mask]
+
+        def collate(samples):
+            batch_texts, batch_owner_ids, chunk_ids = zip(*samples)
             inputs = self.processor(
-                text=batch,
+                text=list(batch_texts),
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=77,
+                max_length=self.max_seq_length,
             )
-            inputs.to(self.device)
-            with torch.no_grad():
+            return (
+                dict(inputs),
+                torch.tensor(batch_owner_ids, dtype=torch.long),
+                torch.tensor(chunk_ids, dtype=torch.long),
+            )
+
+        dataloader = DataLoader(
+            dataset,
+            batch_sampler=LengthBucketBatchSampler(lengths, self.batch_size),
+            collate_fn=collate,
+            pin_memory=pin_memory_for(self.device),
+        )
+        accumulator = OwnerAccumulator(num_owners, len(dataset), aggregation)
+        with transformer_inference_context(self.device):
+            for inputs, batch_owner_ids, chunk_ids in dataloader:
+                inputs = move_batch_to_device(inputs, self.device)
                 if self.layer_name != "":
                     _ = model.text_model(**inputs)
-
-                    batch_np = self.clip_output.cpu().float().numpy()
-                    if batch_np.ndim == 3:
-                        batch_np = batch_np.mean(axis=1)
+                    pooled = pool_transformer_output(
+                        self.clip_output, inputs["attention_mask"]
+                    )
                 else:
-                    batch_np = model.get_text_features(**inputs).cpu().float().numpy()
+                    pooled = model.get_text_features(**inputs)
+                accumulator.update(pooled, batch_owner_ids, chunk_ids)
 
-                if aggregation is not None:
-                    batch_np = aggregation.execute(batch_np)
-
-                embeddings.extend(batch_np)
-
+        embeddings = accumulator.finalize(grouped=grouped)
+        if single_owner:
+            return embeddings[0]
+        if aggregation is None and not grouped:
+            return list(embeddings)
         return embeddings

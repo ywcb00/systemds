@@ -257,6 +257,30 @@ class Modality:
 
         return None
 
+    def subset(self, indices):
+        indices = list(indices)
+        subset_modality = self.copy_from_instance()
+
+        if self.has_metadata():
+            metadata = [selective_copy_metadata(self.metadata[i]) for i in indices]
+        else:
+            metadata = []
+
+        subset_modality.metadata = metadata
+
+        if self.has_data():
+            data = self.data
+            if hasattr(data, "subset"):
+                subset_modality._data = data.subset(indices)
+            elif isinstance(data, np.ndarray):
+                subset_modality.data = data[indices]
+            else:
+                subset_modality.data = [data[i] for i in indices]
+
+        subset_modality.data_type = self.data_type
+        subset_modality.modality_id = self.modality_id
+        return subset_modality
+
     def has_data(self):
         return self.data is not None and len(self.data) != 0
 

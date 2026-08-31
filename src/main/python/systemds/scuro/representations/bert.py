@@ -25,7 +25,17 @@ from systemds.scuro.representations.representation import RepresentationStats
 from systemds.scuro.representations.unimodal import UnimodalRepresentation
 import torch
 from transformers import AutoTokenizer, AutoModel
-from systemds.scuro.representations.utils import save_embeddings
+from systemds.scuro.representations.utils import (
+    LengthBucketBatchSampler,
+    OwnerAccumulator,
+    OwnedSequenceDataset,
+    flatten_owned_sequences,
+    move_batch_to_device,
+    pin_memory_for,
+    pool_transformer_output,
+    save_embeddings,
+    transformer_inference_context,
+)
 from systemds.scuro.modality.type import ModalityType
 from systemds.scuro.drsearch.operator_registry import register_representation
 from systemds.scuro.utils.memory_utility import (
@@ -39,6 +49,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 class BertFamily(UnimodalRepresentation):
+    supports_aggregation_pushdown = True
+    cache_in_worker = True
+
     def __init__(
         self,
         representation_name,
@@ -69,6 +82,10 @@ class BertFamily(UnimodalRepresentation):
         self.data_type = torch.float32
         self.aggregation = aggregation
         self.params = params
+        self.model = None
+        self.tokenizer = None
+        self.bert_output = None
+        self._activation_hook = None
         if params is not None:
             self.layer = params.get("layer", self.layer)
             self.batch_size = int(params.get("batch_size", self.batch_size))
@@ -100,18 +117,15 @@ class BertFamily(UnimodalRepresentation):
         if not isinstance(input_stats, RepresentationStats):
             self.stats = RepresentationStats(
                 input_stats.num_instances,
-                (self.max_seq_length, 768),
-                aggregate_dim=(0,),
+                (768,),
+                aggregate_dim=None,
                 dtype=self.data_type,
             )
         else:
             self.stats = RepresentationStats(
                 input_stats.num_instances,
-                (input_stats.output_shape[0], self.max_seq_length, 768),
-                aggregate_dim=(
-                    0,
-                    1,
-                ),
+                (input_stats.output_shape[0], 768),
+                aggregate_dim=(0,),
                 dtype=self.data_type,
             )
         if self.params and "_pushdown_aggregation" in self.params:
@@ -181,12 +195,15 @@ class BertFamily(UnimodalRepresentation):
 
     def transform(self, modality, aggregation=None):
         transformed_modality = TransformedModality(modality, self)
-        tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name, clean_up_tokenization_spaces=True
-        )
-        self.model = AutoModel.from_pretrained(self.model_name)
+        if self.tokenizer is None:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, clean_up_tokenization_spaces=True
+            )
+        if self.model is None:
+            self.model = AutoModel.from_pretrained(self.model_name)
 
         self.model = self.model.to(self.device)
+        self.model.eval()
         self.bert_output = None
 
         def get_activation(name):
@@ -202,26 +219,29 @@ class BertFamily(UnimodalRepresentation):
 
         aggregate_dim = (0,)
         if self.layer != "cls":
-            for name, layer in self.model.named_modules():
-                if name == self.layer:
-                    layer.register_forward_hook(get_activation(name))
-                    break
+            if self._activation_hook is None:
+                for name, layer in self.model.named_modules():
+                    if name == self.layer:
+                        self._activation_hook = layer.register_forward_hook(
+                            get_activation(name)
+                        )
+                        break
         if ModalityType.TEXT.has_field(modality.metadata, "text_spans"):
-            dataset = TextSpanDataset(modality.data, modality.metadata)
-            embeddings = []
-            aggregate_dim = (0, 1)
-            for text in dataset:
-                embedding = self.create_embeddings(
-                    text, self.model, tokenizer, aggregation
-                )
-                embeddings.append(
-                    aggregation.execute(embedding)
-                    if aggregation is not None
-                    else embedding
-                )
+            chunk_groups = list(TextSpanDataset(modality.data, modality.metadata))
+            chunks, owner_ids = flatten_owned_sequences(chunk_groups)
+            aggregate_dim = None if aggregation is not None else (0,)
+            embeddings = self.create_embeddings(
+                chunks,
+                self.model,
+                self.tokenizer,
+                aggregation,
+                owner_ids=owner_ids,
+                num_owners=len(chunk_groups),
+                grouped=aggregation is None,
+            )
         else:
             embeddings = self.create_embeddings(
-                modality.data, self.model, tokenizer, aggregation
+                modality.data, self.model, self.tokenizer
             )
         if self.output_file is not None:
             save_embeddings(embeddings, self.output_file)
@@ -235,69 +255,97 @@ class BertFamily(UnimodalRepresentation):
     def assert_output_stats(self, transformed_modality):
         if self.stats:
             assert len(transformed_modality.data) == self.stats.num_instances
-            if len(self.stats.output_shape) == 3:
+            actual_shape = np.asarray(transformed_modality.data[0]).shape
+            if len(self.stats.output_shape) == 2:
                 assert (
-                    transformed_modality.data[0].shape[0] <= self.stats.output_shape[0]
-                ), f"Output shape: {transformed_modality.data[0].shape}, Expected shape: {self.stats.output_shape}"
+                    actual_shape[0] <= self.stats.output_shape[0]
+                ), f"Output shape: {actual_shape}, Expected shape: {self.stats.output_shape}"
                 assert (
-                    transformed_modality.data[0].shape[1] == self.stats.output_shape[1]
-                ), f"Output shape: {transformed_modality.data[0].shape}, Expected shape: {self.stats.output_shape}"
-                assert (
-                    transformed_modality.data[0].shape[2] == self.stats.output_shape[2]
-                ), f"Output shape: {transformed_modality.data[0].shape}, Expected shape: {self.stats.output_shape}"
+                    actual_shape[1] == self.stats.output_shape[1]
+                ), f"Output shape: {actual_shape}, Expected shape: {self.stats.output_shape}"
             else:
                 assert (
-                    transformed_modality.data[0].shape[0] == self.stats.output_shape[0]
-                ), f"Output shape: {transformed_modality.data[0].shape}, Expected shape: {self.stats.output_shape}"
-                assert (
-                    transformed_modality.data[0].shape[1] == self.stats.output_shape[1]
-                ), f"Output shape: {transformed_modality.data[0].shape}, Expected shape: {self.stats.output_shape}"
+                    actual_shape == self.stats.output_shape
+                ), f"Output shape: {actual_shape}, Expected shape: {self.stats.output_shape}"
 
-    def create_embeddings(self, data, model, tokenizer, aggregation=None):
-        dataset = TextDataset(data)
-        dataloader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=False, collate_fn=None
+    def create_embeddings(
+        self,
+        data,
+        model,
+        tokenizer,
+        aggregation=None,
+        owner_ids=None,
+        num_owners=None,
+        grouped=False,
+    ):
+        texts = list(TextDataset(data))
+        single_owner = owner_ids is None and aggregation is not None
+        if owner_ids is None:
+            owner_ids = [0] * len(texts) if single_owner else range(len(texts))
+        if num_owners is None:
+            num_owners = 1 if single_owner else len(texts)
+        dataset = OwnedSequenceDataset(texts, owner_ids)
+
+        length_encoding = tokenizer(
+            texts,
+            padding=False,
+            truncation=True,
+            max_length=self.max_seq_length,
+            return_attention_mask=True,
         )
-        cls_embeddings = []
-        for batch in dataloader:
+        attention_mask = length_encoding.get("attention_mask")
+        if isinstance(attention_mask, torch.Tensor):
+            lengths = attention_mask.sum(dim=1).tolist()
+        else:
+            lengths = [sum(mask) for mask in attention_mask]
+
+        def collate(samples):
+            batch_texts, batch_owner_ids, chunk_ids = zip(*samples)
             inputs = tokenizer(
-                batch,
+                list(batch_texts),
                 return_offsets_mapping=True,
                 return_tensors="pt",
-                padding="max_length",
+                padding=True,
                 return_attention_mask=True,
                 truncation=True,
-                max_length=self.max_seq_length,  # TODO: make this dynamic with parameter to tune
+                max_length=self.max_seq_length,
             )
-            inputs.to(self.device)
-            # ModalityType.TEXT.add_field_for_instances(
-            #     modality.metadata,
-            #     "token_to_character_mapping",
-            #     inputs.data["offset_mapping"].tolist(),
-            # )
-            #
-            # ModalityType.TEXT.add_field_for_instances(
-            #     modality.metadata,
-            #     "attention_masks",
-            #     inputs.data["attention_mask"].tolist(),
-            # )
-            del inputs.data["offset_mapping"]
+            inputs = dict(inputs)
+            inputs.pop("offset_mapping", None)
+            return (
+                inputs,
+                torch.tensor(batch_owner_ids, dtype=torch.long),
+                torch.tensor(chunk_ids, dtype=torch.long),
+            )
 
-            with torch.no_grad():
+        dataloader = DataLoader(
+            dataset,
+            batch_sampler=LengthBucketBatchSampler(lengths, self.batch_size),
+            collate_fn=collate,
+            pin_memory=pin_memory_for(self.device),
+        )
+        accumulator = OwnerAccumulator(num_owners, len(dataset), aggregation)
+        with transformer_inference_context(self.device):
+            for inputs, batch_owner_ids, chunk_ids in dataloader:
+                inputs = move_batch_to_device(inputs, self.device)
                 outputs = model(**inputs)
                 if self.layer == "cls":
-                    cls_embedding = outputs.last_hidden_state.detach().cpu().numpy()
+                    hidden_state = outputs.last_hidden_state
                 else:
-                    cls_embedding = self.bert_output.cpu().numpy()
-                if (
-                    aggregation is not None
-                    and self.layer != "pooler"
-                    and self.layer != "pooler.activation"
-                ):
-                    cls_embedding = aggregation.execute(cls_embedding)
-                cls_embeddings.extend(cls_embedding)
+                    hidden_state = self.bert_output
+                pooled = pool_transformer_output(
+                    hidden_state,
+                    inputs["attention_mask"],
+                    use_cls=self.layer == "cls",
+                )
+                accumulator.update(pooled, batch_owner_ids, chunk_ids)
 
-        return cls_embeddings
+        embeddings = accumulator.finalize(grouped=grouped)
+        if single_owner:
+            return embeddings[0]
+        if aggregation is None and not grouped:
+            return list(embeddings)
+        return embeddings
 
 
 @register_representation(ModalityType.TEXT)

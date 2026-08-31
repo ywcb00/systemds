@@ -44,6 +44,7 @@ class BoW(UnimodalRepresentation):
         self.min_df = int(min_df)
         self.output_file = output_file
         self.data_type = np.float32
+        self.requires_dimensionality_reduction = True
 
     def get_output_stats(self, input_stats: TextStats) -> RepresentationStats:
         vocab_estimate = min(

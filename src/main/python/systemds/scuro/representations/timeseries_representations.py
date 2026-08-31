@@ -249,10 +249,8 @@ class Quantile(TimeSeriesRepresentation):
 @register_context_representation_operator(ModalityType.PHYSIOLOGICAL)
 @register_context_representation_operator(ModalityType.AUDIO)
 class Kurtosis(TimeSeriesRepresentation):
-    min_input_length = 4  # the fourth moment is undefined below four samples
-
     def __init__(self, params=None):
-        super().__init__("Kurtosis")
+        super().__init__("Kurtosis", min_input_length=4)
 
     def compute_feature(self, signal, axis=-1):
         return np.array(stats.kurtosis(signal, fisher=True, bias=True, axis=axis))

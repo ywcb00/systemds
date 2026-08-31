@@ -102,15 +102,18 @@ class MFCC(UnimodalRepresentation):
             mean = mfcc.mean(keepdims=True)
             std = mfcc.std(keepdims=True)
         else:
-            mean = mfcc.mean(axis=(1, 2), keepdims=True)
-            std = mfcc.std(axis=(1, 2), keepdims=True)
+            mean = mfcc.mean(axis=(-2, -1), keepdims=True)
+            std = mfcc.std(axis=(-2, -1), keepdims=True)
         mfcc -= mean
         mfcc /= np.maximum(std, 1e-8)
 
         if instance.ndim == 1:
             return mfcc.T
 
-        return mfcc.transpose(0, 2, 1)
+        return np.swapaxes(mfcc, -2, -1)
+
+    def compute_features_batched(self, data, sr=None):
+        return self.compute_feature(np.asarray(data), sr=sr)
 
     def get_output_stats(self, input_stats) -> RepresentationStats:
         num_instances = getattr(input_stats, "num_instances", 0)

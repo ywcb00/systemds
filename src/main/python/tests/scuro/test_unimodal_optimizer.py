@@ -28,11 +28,24 @@ from systemds.scuro.drsearch.operator_registry import Registry
 from systemds.scuro.drsearch.unimodal_optimizer import UnimodalOptimizer
 from systemds.scuro.representations.covarep_audio_features import ZeroCrossing
 
+from systemds.scuro.representations.covarep_audio_features import (
+    Spectral,
+    RMSE,
+    Pitch,
+)
 from systemds.scuro.representations.resnet import ResNet
 from systemds.scuro.representations.mel_spectrogram import MelSpectrogram
+from systemds.scuro.representations.mfcc import MFCC
+from systemds.scuro.representations.mlp_averaging import MLPAveraging
+from systemds.scuro.representations.spectrogram import Spectrogram
 from systemds.scuro.representations.tfidf import TfIdf
 from systemds.scuro.representations.bow import BoW
 from systemds.scuro.representations.bert import Bert
+from systemds.scuro.representations.word2vec import W2V
+from tests.scuro.test_unimodal_representations import (
+    PHYSIOLOGICAL_REPRESENTATIONS,
+    TIMESERIES_REPRESENTATIONS,
+)
 from systemds.scuro.modality.unimodal_modality import UnimodalModality
 from tests.scuro.data_generator import (
     ModalityRandomDataGenerator,
@@ -62,6 +75,37 @@ LIGHTWEIGHT_REGISTRY = {
     ModalityType.EMBEDDING: [],
 }
 
+#: Every registered representation that runs without downloading a pretrained
+#: model. The transformer- and CNN-based ones (Bert, RoBERTa, CLIP, GloVe, X3D,
+#: VGG19, Swin, Wav2Vec) are deliberately absent: they pull hundreds of MB over
+#: the network, which is the same reason the video representation test in
+#: test_unimodal_representations.py is commented out.
+FULL_TEXT_REPRESENTATIONS = [BoW, TfIdf, W2V]
+FULL_AUDIO_REPRESENTATIONS = [
+    MFCC,
+    MelSpectrogram,
+    Spectrogram,
+    Spectral,
+    RMSE,
+    Pitch,
+    ZeroCrossing,
+]
+FULL_IMAGE_REPRESENTATIONS = [ColorHistogram]
+FULL_TIMESERIES_REPRESENTATIONS = TIMESERIES_REPRESENTATIONS
+FULL_PHYSIOLOGICAL_REPRESENTATIONS = PHYSIOLOGICAL_REPRESENTATIONS
+
+
+def registry_for(modality_type, representations):
+    """A registry holding `representations` for one modality and nothing else.
+
+    Every modality type has to be present: the optimizer looks its modality up
+    directly, and a partial dict would raise a KeyError rather than search an
+    empty space.
+    """
+    registry = {m_type: [] for m_type in ModalityType}
+    registry[modality_type] = representations
+    return registry
+
 
 class TestUnimodalRepresentationOptimizer(unittest.TestCase):
     data_generator = None
@@ -88,6 +132,38 @@ class TestUnimodalRepresentationOptimizer(unittest.TestCase):
             )
         )
         self.optimize_unimodal_representation_for_modality([text])
+
+    def test_bow_and_tfidf_require_dimensionality_reduction_before_task(self):
+        text_data, text_md = ModalityRandomDataGenerator().create_text_data(
+            self.num_instances, 10
+        )
+        text = UnimodalModality(
+            TestDataLoader(
+                self.indices, None, ModalityType.TEXT, text_data, str, text_md
+            )
+        )
+
+        dimensionality_reduction_operators = {ModalityType.EMBEDDING: [MLPAveraging]}
+        for representation in (BoW, TfIdf):
+            with self.subTest(representation=representation.__name__), patch.object(
+                Registry,
+                "_representations",
+                registry_for(ModalityType.TEXT, [representation]),
+            ), patch.object(
+                Registry,
+                "_dimensionality_reduction_operators",
+                dimensionality_reduction_operators,
+            ):
+                optimizer = UnimodalOptimizer(
+                    [text], self.tasks, False, enable_checkpointing=False
+                )
+                _, _, task_dags = optimizer._build_execution_dags_for_modality(text)
+
+                self.assertGreater(len(task_dags), 0)
+                for dag in task_dags:
+                    task_node = dag.get_node_by_id(dag.root_node_id)
+                    task_input = dag.get_node_by_id(task_node.inputs[0])
+                    self.assertIs(task_input.operation, MLPAveraging)
 
     def test_unimodal_optimizer_for_image_modality(self):
         image_data, image_md = ModalityRandomDataGenerator().create_visual_modality(
@@ -133,7 +209,7 @@ class TestUnimodalRepresentationOptimizer(unittest.TestCase):
 
     def test_unimodal_optimizer_for_video_modality(self):
         video_data, video_md = ModalityRandomDataGenerator().create_visual_modality(
-            self.num_instances, 10, 10
+            self.num_instances, 10, 10, 10
         )
         video = UnimodalModality(
             TestDataLoader(
@@ -141,6 +217,122 @@ class TestUnimodalRepresentationOptimizer(unittest.TestCase):
             )
         )
         self.optimize_unimodal_representation_for_modality([video])
+
+    # ------------------------------------------------------------------
+    # Every registered representation, run through the optimizer
+    # ------------------------------------------------------------------
+    #
+    # The tests above check that the optimizer runs at all. These check that no
+    # individual representation breaks it: a rep whose get_output_stats,
+    # preconditions or transform disagree with what the executor expects takes
+    # the whole search down, and with a two-representation registry that would
+    # never surface.
+
+    def _optimize_with_registry(self, modality, registry):
+        with patch.object(Registry, "_representations", registry):
+            Registry()
+            unimodal_optimizer = UnimodalOptimizer(
+                [modality],
+                self.tasks,
+                False,
+                k=1,
+                max_num_workers=1,
+                enable_checkpointing=False,
+            )
+            unimodal_optimizer.optimize()
+
+            self.assertIn(
+                modality.modality_id,
+                unimodal_optimizer.operator_performance.modality_ids,
+            )
+            result, _ = unimodal_optimizer.operator_performance.get_k_best_results(
+                modality, self.tasks[0], "accuracy"
+            )
+            self.assertEqual(len(result), 1)
+            return unimodal_optimizer
+
+    def test_unimodal_optimizer_with_all_text_representations(self):
+        text_data, text_md = ModalityRandomDataGenerator().create_text_data(
+            self.num_instances, 10
+        )
+        text = UnimodalModality(
+            TestDataLoader(
+                self.indices, None, ModalityType.TEXT, text_data, str, text_md
+            )
+        )
+        self._optimize_with_registry(
+            text, registry_for(ModalityType.TEXT, FULL_TEXT_REPRESENTATIONS)
+        )
+
+    def test_unimodal_optimizer_with_all_audio_representations(self):
+        audio_data, audio_md = ModalityRandomDataGenerator().create_audio_data(
+            self.num_instances, 4000
+        )
+        audio = UnimodalModality(
+            TestDataLoader(
+                self.indices, None, ModalityType.AUDIO, audio_data, np.float32, audio_md
+            )
+        )
+        self._optimize_with_registry(
+            audio, registry_for(ModalityType.AUDIO, FULL_AUDIO_REPRESENTATIONS)
+        )
+
+    def test_unimodal_optimizer_with_all_image_representations(self):
+        image_data, image_md = ModalityRandomDataGenerator().create_visual_modality(
+            self.num_instances, 1, 10, 10
+        )
+        image = UnimodalModality(
+            TestDataLoader(
+                self.indices, None, ModalityType.IMAGE, image_data, np.float32, image_md
+            )
+        )
+        self._optimize_with_registry(
+            image, registry_for(ModalityType.IMAGE, FULL_IMAGE_REPRESENTATIONS)
+        )
+
+    def test_unimodal_optimizer_with_all_timeseries_representations(self):
+        ts_data, ts_md = ModalityRandomDataGenerator().create_timeseries_data(
+            self.num_instances, 256
+        )
+        timeseries = UnimodalModality(
+            TestDataLoader(
+                self.indices,
+                None,
+                ModalityType.TIMESERIES,
+                ts_data,
+                np.float32,
+                ts_md,
+            )
+        )
+        optimizer = self._optimize_with_registry(
+            timeseries,
+            registry_for(ModalityType.TIMESERIES, FULL_TIMESERIES_REPRESENTATIONS),
+        )
+        # A search over windowed timeseries always proposes some configurations
+        # the input cannot express (a lag longer than the window, a moment on a
+        # two-sample window). Those must be pruned up front, not executed.
+        self.assertGreater(len(optimizer.pruned), 0)
+
+    def test_unimodal_optimizer_with_all_physiological_representations(self):
+        data, md = ModalityRandomDataGenerator().create_physiological_data(
+            self.num_instances, 2000, kind="ecg", fs=500.0
+        )
+        physiological = UnimodalModality(
+            TestDataLoader(
+                self.indices,
+                None,
+                ModalityType.PHYSIOLOGICAL,
+                data,
+                np.float32,
+                md,
+            )
+        )
+        self._optimize_with_registry(
+            physiological,
+            registry_for(
+                ModalityType.PHYSIOLOGICAL, FULL_PHYSIOLOGICAL_REPRESENTATIONS
+            ),
+        )
 
     def test_aggregation_pushdown_preserves_dag_id_and_bert_node_parameters(self):
         builder = CSEAwareDAGBuilder()
@@ -184,12 +376,13 @@ class TestUnimodalRepresentationOptimizer(unittest.TestCase):
         pushdown_aggregation([dag])
 
         self.assertEqual(dag.dag_id, expected_dag_id)
-        self.assertEqual(dag.root_node_id, bert_id)
+        self.assertEqual(dag.root_node_id, agg_id)
         self.assertEqual(len(dag.nodes), 2)
-        self.assertIsNone(dag.get_node_by_id(agg_id))
+        self.assertIsNone(dag.get_node_by_id(bert_id))
 
-        bert_after = dag.get_node_by_id(bert_id)
+        bert_after = dag.get_node_by_id(agg_id)
         self.assertIsNotNone(bert_after)
+        self.assertIs(bert_after.operation, Bert)
         self.assertEqual(bert_after.inputs, [leaf_id])
         self.assertIn("_pushdown_aggregation", bert_after.parameters)
         self.assertEqual(

@@ -19,12 +19,12 @@
 #
 # -------------------------------------------------------------
 from dataclasses import dataclass
-import os
-from typing import List, Optional, Union
+import math
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
-from systemds.scuro.dataloader.base_loader import BaseLoader
+from systemds.scuro.dataloader.base_loader import BaseLoader, LazyFileSequence
 import cv2
 from systemds.scuro.modality.type import ModalityType
 
@@ -39,6 +39,7 @@ class VideoStats:
     max_channels: int
     num_instances: int
     num_total_instances: int
+    shape_variance: float = 0.0
 
     @property
     def output_shape(self):
@@ -52,6 +53,15 @@ class VideoStats:
         """
         return (self.max_length, self.max_height, self.max_width, self.max_channels)
 
+    @property
+    def avg_output_shape(self):
+        return (
+            max(1, int(round(self.avg_length))),
+            self.max_height,
+            self.max_width,
+            self.max_channels,
+        )
+
 
 class VideoLoader(BaseLoader):
     def __init__(
@@ -62,109 +72,181 @@ class VideoLoader(BaseLoader):
         chunk_size: Optional[int] = None,
         load=True,
         fps=None,
+        target_size: Optional[Tuple[int, int]] = None,
     ):
         super().__init__(
             source_path, indices, data_type, chunk_size, ModalityType.VIDEO
         )
         self.load_data_from_file = load
         self.fps = fps
+        self.target_size = tuple(int(v) for v in target_size) if target_size else None
+        self._all_metadata = []
         self.stats = self.get_stats(source_path)
 
-    def extract(self, file: str, index: Optional[Union[str, List[str]]] = None):
+    def load(self):
+        if self.chunk_size:
+            return super().load()
+
+        self.data = LazyFileSequence(
+            self.get_file_names(self.indices), self._decode_data
+        )
+        self.metadata = self._all_metadata.copy()
+        return self.data, self.metadata
+
+    def _decode_data(self, file: str):
+        return self._decode_file(file)[0]
+
+    def _frame_interval(self, source_fps: float) -> int:
+        if self.fps and source_fps and self.fps < source_fps:
+            return max(1, int(round(source_fps / self.fps)))
+        return 1
+
+    def _stored_length(self, source_length: int, source_fps: float) -> int:
+        interval = self._frame_interval(source_fps)
+        return int(math.ceil(source_length / interval)) if source_length > 0 else 0
+
+    def _stored_frame_size(self, width: int, height: int) -> Tuple[int, int]:
+        return self.target_size if self.target_size else (width, height)
+
+    def _fit_frame(self, frame: np.ndarray) -> np.ndarray:
+        if self.target_size is None:
+            return frame
+
+        target_w, target_h = self.target_size
+        height, width = frame.shape[:2]
+        if (width, height) == (target_w, target_h):
+            return frame
+
+        scale = max(target_w / width, target_h / height)
+        new_w = max(target_w, int(round(width * scale)))
+        new_h = max(target_h, int(round(height * scale)))
+        interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        frame = cv2.resize(frame, (new_w, new_h), interpolation=interpolation)
+
+        left = (new_w - target_w) // 2
+        top = (new_h - target_h) // 2
+        return frame[top : top + target_h, left : left + target_w]
+
+    def _decode_file(self, file: str):
         self.file_sanity_check(file)
         cap = cv2.VideoCapture(file)
 
         if not cap.isOpened():
-            raise f"Could not read video at path: {file}"
+            raise ValueError(f"Could not read video at path: {file}")
 
-        orig_fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_interval = 1
-        if self.fps is not None and self.fps < orig_fps:
-            frame_interval = int(round(orig_fps / self.fps))
-        else:
-            self.fps = orig_fps
+        try:
+            source_fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_interval = self._frame_interval(source_fps)
+            stored_fps = source_fps / frame_interval if source_fps else source_fps
 
-        length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        num_channels = 3
+            scale_denominator = np.dtype(self._data_type).type(255.0)
+            frames = []
+            idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if idx % frame_interval == 0:
+                    frame = self._fit_frame(frame)
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frame = frame.astype(self._data_type) / scale_denominator
+                    frames.append(frame)
+                idx += 1
+        finally:
+            cap.release()
 
-        self.metadata.append(
-            self.modality_type.create_metadata(
-                self.fps, length, width, height, num_channels
-            )
+        if not frames:
+            raise ValueError(f"No frames could be decoded from {file}")
+
+        data = np.stack(frames)
+
+        num_frames, height, width = data.shape[0], data.shape[1], data.shape[2]
+        metadata = self.modality_type.create_metadata(
+            stored_fps, num_frames, width, height, data.shape[3]
         )
+        return data, metadata
 
-        frames = []
-        idx = 0
-        while cap.isOpened():
-            ret, frame = cap.read()
-
-            if not ret:
-                break
-            if idx % frame_interval == 0:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = frame.astype(self._data_type, copy=False) / 255.0
-                frames.append(frame)
-            idx += 1
-
-        self.data.append(np.stack(frames))
+    def extract(self, file: str, index: Optional[Union[str, List[str]]] = None):
+        data, metadata = self._decode_file(file)
+        self.metadata.append(metadata)
+        self.data.append(data)
 
     def get_stats(self, source_path: str):
+        self._all_metadata = []
         self.file_sanity_check(source_path)
-        fps = 0
         max_length = 0
         max_width = 0
         max_height = 0
         max_num_channels = 0
         num_instances = 0
-        avg_length = 0
-        for file in os.listdir(source_path):
-            file_name = file.split(".")[0]
-            if file_name not in self.indices:
-                continue
-            self.file_sanity_check(source_path + file)
-            cap = cv2.VideoCapture(source_path + file)
+        stored_lengths = []
+        stored_fps = []
 
-            length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        for file in self.get_file_names(self.indices):
+            self.file_sanity_check(file)
+            cap = cv2.VideoCapture(file)
+            if not cap.isOpened():
+                raise ValueError(f"Could not read video at path: {file}")
+            try:
+                source_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            finally:
+                cap.release()
+
+            length = self._stored_length(source_length, source_fps)
+            width, height = self._stored_frame_size(width, height)
             num_channels = 3
+            stored_frequency = (
+                source_fps / self._frame_interval(source_fps) if source_fps else 0
+            )
+            self._all_metadata.append(
+                self.modality_type.create_metadata(
+                    stored_frequency, length, width, height, num_channels
+                )
+            )
+
             max_length = max(max_length, length)
-            avg_length += length
             max_width = max(max_width, width)
             max_height = max(max_height, height)
             max_num_channels = max(max_num_channels, num_channels)
+            stored_lengths.append(length)
+            if source_fps:
+                stored_fps.append(stored_frequency)
             num_instances += 1
+
         num_total_instances = num_instances
+        avg_length = float(np.mean(stored_lengths)) if stored_lengths else 0.0
+        shape_variance = (
+            float(np.std(stored_lengths) / avg_length)
+            if stored_lengths and avg_length > 0
+            else 0.0
+        )
         num_instances = (
             min(num_instances, self.chunk_size)
             if self.chunk_size is not None
             else num_instances
         )
         return VideoStats(
-            fps,
+            float(np.mean(stored_fps)) if stored_fps else 0,
             max_length,
-            avg_length / num_instances,
+            avg_length,
             max_width,
             max_height,
             max_num_channels,
             num_instances,
             num_total_instances,
+            shape_variance,
         )
 
     def estimate_peak_memory_bytes(self) -> dict:
-        s = self.stats
-        if self.chunk_size is not None:
-            n = self.chunk_size
-        else:
-            n = s.num_instances
+        stats = self.stats
+        n = self.chunk_size if self.chunk_size is not None else 1
+        n = min(n, stats.num_total_instances)
+        per_instance = int(np.prod(stats.avg_output_shape))
+        itemsize = np.dtype(self._data_type).itemsize
         return {
-            "cpu_peak_bytes": n
-            * s.output_shape[0]
-            * s.output_shape[1]
-            * s.output_shape[2]
-            * s.output_shape[3]
-            * 4,
+            "cpu_peak_bytes": int(n * per_instance * itemsize),
             "gpu_peak_bytes": 0,
         }

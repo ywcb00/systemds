@@ -93,7 +93,10 @@ class MelSpectrogram(UnimodalRepresentation):
         if instance.ndim == 1:
             return S.T
 
-        return S.transpose(0, 2, 1)
+        return np.swapaxes(S, -2, -1)
+
+    def compute_features_batched(self, data, sr=None):
+        return self.compute_feature(np.asarray(data), sr=sr)
 
     def get_output_stats(self, input_stats) -> RepresentationStats:
         num_instances = getattr(input_stats, "num_instances", 0)

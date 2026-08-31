@@ -24,6 +24,7 @@ from systemds.scuro.dataloader.image_loader import ImageLoader
 from systemds.scuro.dataloader.video_loader import VideoLoader
 from systemds.scuro.dataloader.text_loader import TextLoader
 from systemds.scuro.dataloader.json_loader import JSONLoader
+from systemds.scuro.dataloader.tabular_loader import TabularLoader
 from systemds.scuro.representations.representation import Representation
 from systemds.scuro.representations.aggregate import Aggregation
 from systemds.scuro.representations.aggregated_representation import (
@@ -71,9 +72,23 @@ from systemds.scuro.representations.representation_dataloader import NPY
 from systemds.scuro.representations.representation_dataloader import JSON
 from systemds.scuro.representations.representation_dataloader import Pickle
 from systemds.scuro.representations.resnet import ResNet
+from systemds.scuro.representations.openface import OpenFace
+
+try:
+    from systemds.scuro.representations.image_bind import ImageBind
+except ImportError as _imagebind_import_error:  # pragma: no cover
+    import warnings as _warnings
+
+    _warnings.warn(
+        f"ImageBind representation unavailable, it is excluded from the search "
+        f"({_imagebind_import_error})."
+    )
+    ImageBind = None
+
 from systemds.scuro.representations.spectrogram import Spectrogram
 from systemds.scuro.representations.sum import Sum
 from systemds.scuro.representations.swin_video_transformer import SwinVideoTransformer
+from systemds.scuro.representations.tabular_features import TabularFeatures
 from systemds.scuro.representations.tfidf import TfIdf
 from systemds.scuro.representations.unimodal import UnimodalRepresentation
 from systemds.scuro.representations.wav2vec import Wav2Vec
@@ -81,6 +96,10 @@ from systemds.scuro.representations.window_aggregation import (
     WindowAggregation,
     DynamicWindow,
     StaticWindow,
+)
+from systemds.scuro.representations.physiological_window import (
+    AdaptiveWindow,
+    PhysiologicalEventWindow,
 )
 from systemds.scuro.representations.word2vec import W2V
 from systemds.scuro.representations.x3d import X3D
@@ -124,6 +143,28 @@ from systemds.scuro.representations.mlp_learned_dim_reduction import (
     MLPLearnedDimReduction,
 )
 
+
+from systemds.scuro.representations.physiological_representations import (
+    SDNN,
+    RMSSD,
+    pNN,
+    RRPerMinute,
+    HRVBandPower,
+    HRVVLF,
+    HRVLF,
+    HRVHF,
+    HRVLFHF,
+    PoincareSD1,
+    PoincareSD2,
+    # SampleEntropy,
+    # DFAAlpha,
+    SCLSlope,
+    SCLDynamicRange,
+    SCRPeaksPerMinute,
+    SCRAverageAmplitude,
+    SCRAverageDuration,
+)
+
 __all__ = [
     "BaseLoader",
     "ImageLoader",
@@ -156,6 +197,8 @@ __all__ = [
     "JSON",
     "Pickle",
     "ResNet",
+    "OpenFace",
+    "ImageBind",
     "Spectrogram",
     "Sum",
     "BoW",
@@ -187,6 +230,8 @@ __all__ = [
     "AttentionFusion",
     "DynamicWindow",
     "StaticWindow",
+    "AdaptiveWindow",
+    "PhysiologicalEventWindow",
     "Min",
     "Max",
     "Mean",
@@ -211,4 +256,22 @@ __all__ = [
     "MLPAveraging",
     "MLPLearnedDimReduction",
     "DimensionalityReduction",
+    "MultimodalGAPymooOptimizer",
+    "SDNN",
+    "RMSSD",
+    "pNN",
+    "RRPerMinute",
+    "HRVBandPower",
+    "HRVVLF",
+    "HRVLF",
+    "HRVHF",
+    "HRVLFHF",
+    "PoincareSD1",
+    "PoincareSD2",
+    # "DFAAlpha",
+    "SCLSlope",
+    "SCLDynamicRange",
+    "SCRPeaksPerMinute",
+    "SCRAverageAmplitude",
+    "SCRAverageDuration",
 ]

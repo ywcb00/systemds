@@ -69,6 +69,7 @@ class UnimodalOptimizer:
         window_combination_chains: int = 1,
     ):
         self._node_stats: Dict[str, Any] = {}
+        self.pruned = []
         self.window_combination_chains = window_combination_chains
         self.enable_checkpointing = enable_checkpointing
         self.modalities = modalities
@@ -483,7 +484,11 @@ class UnimodalOptimizer:
         )
         current_node_id = rep_node_id
         rep_dag = builder.build(current_node_id)
-        dags.append(rep_dag)
+        requires_dimensionality_reduction = getattr(
+            operator, "requires_dimensionality_reduction", False
+        )
+        if not requires_dimensionality_reduction:
+            dags.append(rep_dag)
 
         dimensionality_reduction_dags = self.add_dimensionality_reduction_operators(
             builder, current_node_id
@@ -515,7 +520,9 @@ class UnimodalOptimizer:
                     operator.get_current_parameters(),
                 )
 
-                agg_operator = AggregatedRepresentation(target_dimensions=1)
+                agg_operator = AggregatedRepresentation(
+                    target_dimensions=1, aggregate_leading=True
+                )
                 context_agg_node_id = builder.create_operation_node(
                     agg_operator.__class__,
                     [context_rep_node_id],
@@ -560,9 +567,9 @@ class UnimodalOptimizer:
                             )
                         )
 
-        if rep_dag.nodes[-1].operation().output_modality_type in [
-            ModalityType.EMBEDDING
-        ]:
+        if not requires_dimensionality_reduction and rep_dag.nodes[
+            -1
+        ].operation().output_modality_type in [ModalityType.EMBEDDING]:
             dags.extend(
                 self.default_context_operators(
                     modality, builder, leaf_id, rep_dag, True
@@ -695,12 +702,57 @@ class UnimodalOptimizer:
                 modality.modality_type, modality.stats
             )
         )
+        if not window_lengths:
+            for context_operator in context_operators:
+                self.pruned.append(
+                    {
+                        "operation": context_operator.__name__,
+                        "reason": ("no configured window length fits the input signal"),
+                    }
+                )
+            return []
         dags = []
         for context_operator in context_operators:
             for window_size, num_window in zip(window_lengths, num_windows):
                 window_node_ids = []
                 for agg in aggregators:
-                    context_operator_instance = context_operator(agg())
+                    aggregation_instance = agg()
+                    effective_length = self._effective_window_length(
+                        context_operator(),
+                        window_size,
+                        num_window,
+                        modality.stats.max_length,
+                    )
+                    input_stats = self._window_input_stats(modality, effective_length)
+                    for parameter, values in (
+                        aggregation_instance.parameters or {}
+                    ).items():
+                        if not isinstance(values, list):
+                            continue
+                        accepted = aggregation_instance.filter_parameter_domain(
+                            parameter, values, input_stats
+                        )
+                        for value in values:
+                            if value not in accepted:
+                                self.pruned.append(
+                                    {
+                                        "operation": aggregation_instance.name,
+                                        "window_length": effective_length,
+                                        "parameters": {parameter: value},
+                                        "reason": "outside the valid input domain",
+                                    }
+                                )
+                    failure = aggregation_instance.check_preconditions(input_stats)
+                    if failure is not None:
+                        self.pruned.append(
+                            {
+                                "operation": aggregation_instance.name,
+                                "window_length": effective_length,
+                                "reason": failure,
+                            }
+                        )
+                        continue
+                    context_operator_instance = context_operator(aggregation_instance)
                     self._apply_granularity(
                         context_operator_instance, window_size, num_window
                     )

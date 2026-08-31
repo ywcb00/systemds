@@ -52,11 +52,14 @@ class OpticalFlow(UnimodalRepresentation):
         )
 
         for video_id, instance in enumerate(modality.data):
+            if instance.dtype == np.float16:
+                instance = instance.astype(np.float32)
+
             transformed_modality.data.append([])
 
-            previous_gray = cv2.cvtColor(instance[0], cv2.COLOR_BGR2GRAY)
+            previous_gray = cv2.cvtColor(instance[0], cv2.COLOR_RGB2GRAY)
             for frame_id in range(1, len(instance)):
-                gray = cv2.cvtColor(instance[frame_id], cv2.COLOR_BGR2GRAY)
+                gray = cv2.cvtColor(instance[frame_id], cv2.COLOR_RGB2GRAY)
 
                 flow = cv2.calcOpticalFlowFarneback(
                     previous_gray,
@@ -72,5 +75,6 @@ class OpticalFlow(UnimodalRepresentation):
                 )
 
                 transformed_modality.data[video_id].append(flow)
+                previous_gray = gray
         transformed_modality.update_metadata()
         return transformed_modality

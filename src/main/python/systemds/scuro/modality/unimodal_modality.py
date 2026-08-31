@@ -18,13 +18,14 @@
 # under the License.
 #
 # -------------------------------------------------------------
+import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 import time
 import numpy as np
-from systemds.scuro import ModalityType
 from systemds.scuro.dataloader.base_loader import BaseLoader
 from systemds.scuro.modality.modality import Modality
+from systemds.scuro.modality.type import ModalityType
 from systemds.scuro.modality.joined import JoinedModality
 from systemds.scuro.modality.transformed import TransformedModality
 from systemds.scuro.representations.representation import (
@@ -58,13 +59,27 @@ class UnimodalModality(Modality):
             new_instance.metadata = self.metadata.copy()
         return new_instance
 
-    def get_metadata_at_position(self, position: int):
-        if self.data_loader.chunk_size:
-            return self.metadata[
-                (self.data_loader.next_chunk - 1) * self.data_loader.chunk_size
-                + position
-            ]
+    def subset(self, indices):
+        if self.data_loader.chunk_size is None:
+            return super().subset(indices)
 
+        indices = list(indices)
+        subset_loader = copy.copy(self.data_loader)
+        subset_loader.indices = [self.data_loader.indices[i] for i in indices]
+        subset_loader.stats = copy.copy(self.data_loader.stats)
+        if hasattr(subset_loader.stats, "num_instances"):
+            subset_loader.stats.num_instances = len(indices)
+        subset_loader.reset()
+        # Re-run the setter after replacing indices so num_chunks reflects the
+        # subset rather than the original dataset.
+        subset_loader.chunk_size = self.data_loader.chunk_size
+
+        subset_modality = type(self)(subset_loader)
+        subset_modality.modality_id = self.modality_id
+        subset_modality.transform_time = self.transform_time
+        return subset_modality
+
+    def get_metadata_at_position(self, position: int):
         return self.metadata[position]
 
     def get_stats(self):
@@ -105,13 +120,15 @@ class UnimodalModality(Modality):
         Uses the data loader to read the raw data from a specified location
         and stores the data in the data location.
         """
-        self.data, self.metadata = self.data_loader.load()
+        data, metadata = self.data_loader.load()
+        self._data = data
+        self.metadata = metadata
 
     def iter_raw_data_chunks(self, reset: bool = True):
         for data, metadata, chunk_indices in self.data_loader.iter_loaded_chunks(
             reset=reset
         ):
-            self.data = data
+            self._data = data
             self.metadata = metadata
             yield chunk_indices
 
@@ -155,74 +172,117 @@ class UnimodalModality(Modality):
         if self.data is None:
             raise Exception("Data is None")
 
-    def apply_representations(self, representations, aggregation=None, parallel=False):
+    def apply_representations(
+        self,
+        representations,
+        aggregation=None,
+        parallel=False,
+        representation_keys=None,
+        aggregations=None,
+    ):
         """
         Applies a list of representations to the modality. Specifically, it applies the representations to the modality in a chunked manner.
         :param representations: List of representations to apply
         :return: List of transformed modalities
         """
+        if representation_keys is None:
+            representation_keys = [
+                representation.name for representation in representations
+            ]
+        if len(representation_keys) != len(representations):
+            raise ValueError("representation_keys must match representations")
+        if len(set(representation_keys)) != len(representation_keys):
+            raise ValueError("representation_keys must be unique")
+
+        if aggregations is None:
+            aggregations = [aggregation] * len(representations)
+        if len(aggregations) != len(representations):
+            raise ValueError("aggregations must match representations")
+
+        representation_specs = list(
+            zip(representation_keys, representations, aggregations)
+        )
         transformed_modalities_per_representation = {}
         padding_per_representation = {}
         original_lengths_per_representation = {}
+        failed_representations = {}
 
-        for representation in representations:
-            transformed_modality = TransformedModality(self, representation.name)
+        for representation_key, representation, _ in representation_specs:
+            transformed_modality = TransformedModality(
+                self, representation.name, representation.output_modality_type
+            )
             transformed_modality.data = []
             transformed_modality.metadata = []
-            transformed_modalities_per_representation[representation.name] = (
+            transformed_modalities_per_representation[representation_key] = (
                 transformed_modality
             )
-            padding_per_representation[representation.name] = False
-            original_lengths_per_representation[representation.name] = []
+            padding_per_representation[representation_key] = False
+            original_lengths_per_representation[representation_key] = []
 
         start = (
             time.time()
         )  # TODO: should be repalced in unimodal_representation.transform
-        if self.data_loader.chunk_size:
-            with ThreadPoolExecutor(
-                max_workers=len(representations) if parallel else 1
-            ) as executor:
-                time_s = time.time()
-                for _ in self.iter_raw_data_chunks(reset=True):
-                    representations_futures = {}
-                    for representation in representations:
-                        future = executor.submit(representation.transform, self)
-                        representations_futures[future] = representation.name
-                    for future in as_completed(representations_futures.keys()):
-                        representation_name = representations_futures.get(future)
+        with ThreadPoolExecutor(
+            max_workers=len(representations) if parallel else 1
+        ) as executor:
+            time_s = time.time()
+            for _ in self.iter_raw_data_chunks(reset=True):
+                representations_futures = {}
+                for (
+                    representation_key,
+                    representation,
+                    rep_aggregation,
+                ) in representation_specs:
+                    if representation_key in failed_representations:
+                        continue
+                    future = executor.submit(
+                        representation.transform, self, rep_aggregation
+                    )
+                    representations_futures[future] = representation_key
+                for future in as_completed(representations_futures.keys()):
+                    representation_key = representations_futures.get(future)
+                    try:
                         transformed_chunk = future.result()
-                        transformed_modalities_per_representation[
-                            representation_name
-                        ].data.extend(transformed_chunk.data)
-                        transformed_modalities_per_representation[
-                            representation_name
-                        ].metadata.extend(transformed_chunk.metadata)
-                        for d in transformed_chunk.data:
+                    except Exception as e:
+                        failed_representations[representation_key] = e
+                        continue
+                    transformed_modalities_per_representation[
+                        representation_key
+                    ].data.extend(transformed_chunk.data)
+                    transformed_modalities_per_representation[
+                        representation_key
+                    ].metadata.extend(transformed_chunk.metadata)
+                    for d in transformed_chunk.data:
+                        shape = getattr(d, "shape", ())
+                        if shape:
                             original_lengths_per_representation[
-                                representation_name
-                            ].append(d.shape[0])
+                                representation_key
+                            ].append(int(shape[0]))
+            if self.data_loader.is_chunked:
                 print(f"Time for transforming data chunks: {time.time() - time_s}")
-        else:
-            if not self.has_data():
-                self.extract_raw_data()
-            new_modality = representation.transform(self)
-            transformed_modalities_per_representation[representation.name] = (
-                new_modality
-            )
 
-        for representation in representations:
+        for representation_name in failed_representations:
+            transformed_modalities_per_representation.pop(representation_name, None)
+
+        if representations and not transformed_modalities_per_representation:
+            raise next(iter(failed_representations.values()))
+
+        for representation_key, representation, _ in representation_specs:
+            if representation_key in failed_representations:
+                continue
             self._apply_padding(
-                transformed_modalities_per_representation[representation.name],
-                original_lengths_per_representation[representation.name],
-                padding_per_representation[representation.name],
+                transformed_modalities_per_representation[representation_key],
+                original_lengths_per_representation[representation_key],
+                padding_per_representation[representation_key],
             )
             transformed_modalities_per_representation[
-                representation.name
+                representation_key
             ].transform_time += (time.time() - start)
             transformed_modalities_per_representation[
-                representation.name
+                representation_key
             ].self_contained = representation.self_contained
         gc.collect()
+        self.failed_representations = failed_representations
         return transformed_modalities_per_representation
 
     def apply_representation(self, representation, aggregation=None):

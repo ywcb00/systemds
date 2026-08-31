@@ -19,12 +19,17 @@
 #
 # -------------------------------------------------------------
 import copy
+import os
 import time
 from typing import List
 from systemds.scuro.models.model import Model
 import numpy as np
 from sklearn.model_selection import train_test_split
 from systemds.scuro.representations.representation import RepresentationStats
+
+_GPU_CONTEXT_FLOOR_BYTES = (
+    int(os.environ.get("SCURO_GPU_CONTEXT_FLOOR_MB", "512")) * 1024 * 1024
+)
 
 
 class PerformanceMeasure:
@@ -170,12 +175,31 @@ class Task:
                     self.model.estimate_peak_memory_bytes(feature_dim, n_train)
                 )
 
+        uses_gpu = getattr(self.model, "uses_gpu", None)
+        if uses_gpu is None:
+            uses_gpu = model_peak_memory_gpu > 0
+
+        gpu_peak_bytes = int(model_peak_memory_gpu * 1.4) if uses_gpu else 0
+        if uses_gpu and gpu_peak_bytes <= 0:
+            gpu_peak_bytes = _GPU_CONTEXT_FLOOR_BYTES
+
         return {
             "cpu_peak_bytes": int(
                 model_peak_memory_cpu * 1.5 + scheduler_side_cpu_bytes * 2
             ),
-            "gpu_peak_bytes": int(model_peak_memory_gpu) * 1.4,
+            "gpu_peak_bytes": gpu_peak_bytes,
         }
+
+    def estimate_relative_cost(self, input_stats) -> float:
+        feature_dim = (
+            int(np.prod(input_stats.output_shape)) if input_stats.output_shape else 0
+        )
+        fold_sizes = [len(fold) for fold in self.cv_train_indices]
+        n_fold_train = max(fold_sizes, default=len(self.train_indices or []))
+        passes = max(1, int(getattr(self.model, "epochs", 1) or 1))
+        return float(
+            max(1, self.kfold) * passes * max(1, n_fold_train) * max(1, feature_dim)
+        )
 
     def _create_cv_splits(self):
         train_labels = [self.labels[i] for i in self.train_indices]

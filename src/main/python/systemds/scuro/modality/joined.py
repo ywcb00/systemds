@@ -18,6 +18,7 @@
 # under the License.
 #
 # -------------------------------------------------------------
+import copy
 import importlib
 import sys
 
@@ -256,7 +257,8 @@ class JoinedModality(Modality):
         )
 
     def _apply_representation(self, modality, representation):
-        transformed = representation.transform(modality)
+        normalized = self._normalize_representation_input(modality)
+        transformed = representation.transform(normalized)
         # if self.aggregation:
         #     aggregated_data_left = self.aggregation.execute(transformed)
         #     transformed = Modality(
@@ -266,3 +268,53 @@ class JoinedModality(Modality):
         #     transformed.data = aggregated_data_left
 
         return transformed
+
+    @staticmethod
+    def _normalize_representation_input(modality):
+        data = []
+        changed = False
+
+        def collect_samples(value):
+            try:
+                array = np.asarray(value)
+            except ValueError:
+                array = np.asarray(value, dtype=object)
+
+            numeric = array.dtype != object and np.issubdtype(array.dtype, np.number)
+            if numeric and array.ndim == 3 and array.shape[-1] <= 4:
+                return [array], False
+            if numeric and array.ndim == 2:
+                return [np.repeat(array[..., np.newaxis], 3, axis=-1)], True
+            if array.ndim == 0:
+                return None
+
+            samples = []
+            for entry in value:
+                result = collect_samples(entry)
+                if result is None:
+                    return None
+                entry_samples, _ = result
+                samples.extend(entry_samples)
+            return samples, True
+
+        for instance in modality.data:
+            result = collect_samples(instance)
+            if result is None:
+                return modality
+            samples, instance_changed = result
+            data.append(samples)
+            changed = changed or instance_changed
+
+        if not changed:
+            return modality
+
+        normalized = Modality(
+            modality.modality_type,
+            modality.modality_id,
+            copy.deepcopy(modality.metadata),
+            modality.data_type,
+            modality.transform_time,
+        )
+        normalized.data = data
+        normalized.stats = modality.stats
+        return normalized

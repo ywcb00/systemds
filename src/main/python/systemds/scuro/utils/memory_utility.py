@@ -167,8 +167,28 @@ def get_gpu_memory_mb(device):
 
 
 def gpu_memory_info():
-    infos = []
     num_gpus = torch.cuda.device_count()
+    if num_gpus == 0:
+        return []
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        try:
+            infos = []
+            for i in range(num_gpus):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                infos.append(
+                    dict(index=i, free_b=int(mem.free), total_b=int(mem.total))
+                )
+            return infos
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:
+        pass
+
+    infos = []
     for i in range(num_gpus):
         torch.cuda.set_device(i)
         free_b, total_b = torch.cuda.mem_get_info()

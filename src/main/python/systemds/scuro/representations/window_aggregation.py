@@ -20,8 +20,11 @@
 # -------------------------------------------------------------
 
 import inspect
-import numpy as np
 import math
+import os
+from collections import defaultdict
+
+import numpy as np
 
 from systemds.scuro.modality.type import DataLayout, ModalityType
 
@@ -48,6 +51,38 @@ def _accepts_axis(compute_feature):
         accepts = "axis" in inspect.signature(compute_feature).parameters
         _ACCEPTS_AXIS_CACHE[func] = accepts
     return accepts
+
+
+_WINDOW_FEATURE_BATCH_SIZE = max(
+    1, int(os.environ.get("SCURO_WINDOW_FEATURE_BATCH_SIZE", "64"))
+)
+
+
+def _compute_window_features(aggregation_function, windows):
+    """Compute independent windows in bounded vectorized batches when supported."""
+    windows = [np.asarray(window) for window in windows]
+    compute_batched = getattr(aggregation_function, "compute_features_batched", None)
+    if not callable(compute_batched):
+        return [aggregation_function.compute_feature(window) for window in windows]
+
+    results = [None] * len(windows)
+    grouped = defaultdict(list)
+    for index, window in enumerate(windows):
+        grouped[(window.shape, window.dtype.str)].append((index, window))
+
+    for group in grouped.values():
+        for start in range(0, len(group), _WINDOW_FEATURE_BATCH_SIZE):
+            chunk = group[start : start + _WINDOW_FEATURE_BATCH_SIZE]
+            batch = np.stack([window for _, window in chunk])
+            batch_result = np.asarray(compute_batched(batch))
+            if batch_result.ndim == 0 or batch_result.shape[0] != len(chunk):
+                raise ValueError(
+                    f"{aggregation_function.name}.compute_features_batched() must "
+                    "preserve the leading batch dimension"
+                )
+            for row, (index, _) in enumerate(chunk):
+                results[index] = batch_result[row]
+    return results
 
 
 def nested_aggregation_param_names(agg_cls):
@@ -497,15 +532,13 @@ class WindowAggregation(Window):
                 tail_result = self.aggregation_function.compute_feature(tail)
                 full_result = _append_tail_row(full_result, tail_result)
         else:
-            full_result = np.stack(
-                [
-                    self.aggregation_function.compute_feature(full_batches[i])
-                    for i in range(full_batches.shape[0])
-                ]
-            )
+            windows = [full_batches[i] for i in range(full_batches.shape[0])]
             if tail.size:
-                tail_result = self.aggregation_function.compute_feature(tail)
-                full_result = _append_tail_row(full_result, tail_result)
+                windows.append(tail)
+            features = _compute_window_features(self.aggregation_function, windows)
+            full_result = np.stack(features[: full_batches.shape[0]])
+            if tail.size:
+                full_result = _append_tail_row(full_result, features[-1])
 
         return full_result
 
@@ -585,8 +618,9 @@ class StaticWindow(Window):
         return {"cpu_peak_bytes": cpu_peak, "gpu_peak_bytes": 0}
 
     def execute(self, modality):
-        windowed_data = []
+        instance_windows = []
         for instance in modality.data:
+            instance = np.asarray(instance)
             window_size = int(np.ceil(len(instance) / self.num_windows))
             padding_size = int(window_size * self.num_windows - len(instance))
             pad_width = [(0, 0)] * instance.ndim
@@ -594,23 +628,28 @@ class StaticWindow(Window):
             instance = np.pad(
                 instance, pad_width=pad_width, mode="constant", constant_values=0
             )
-            full_batches = instance.reshape(
-                self.num_windows, window_size, *instance.shape[1:]
+            instance_windows.append(
+                instance.reshape(self.num_windows, window_size, *instance.shape[1:])
             )
 
-            if _accepts_axis(self.aggregation_function.compute_feature):
-                f = self.aggregation_function.compute_feature(full_batches, axis=1)
-            else:
-                f = np.stack(
-                    [
-                        self.aggregation_function.compute_feature(full_batches[i])
-                        for i in range(full_batches.shape[0])
-                    ]
-                )
+        if _accepts_axis(self.aggregation_function.compute_feature):
+            windowed_data = [
+                self.aggregation_function.compute_feature(windows, axis=1)
+                for windows in instance_windows
+            ]
+        else:
+            flat_windows = [
+                window for windows in instance_windows for window in windows
+            ]
+            flat_features = _compute_window_features(
+                self.aggregation_function, flat_windows
+            )
+            windowed_data = [
+                np.stack(flat_features[start : start + self.num_windows])
+                for start in range(0, len(flat_features), self.num_windows)
+            ]
 
-            windowed_data.append(f)
-        windowed_data = _pad_stack(windowed_data)
-        return windowed_data
+        return _pad_stack(windowed_data)
 
 
 @register_context_operator(
@@ -694,19 +733,29 @@ class DynamicWindow(Window):
         return {"cpu_peak_bytes": cpu_peak, "gpu_peak_bytes": 0}
 
     def execute(self, modality):
-        windowed_data = []
+        all_windows = []
+        windows_per_instance = []
 
         for instance in modality.data:
+            instance = np.asarray(instance)
             indices = np.cumsum(self._window_sizes(len(instance)))
-            output = []
             start = 0
+            count = 0
             for end in indices:
                 window = instance[start:end]
                 window.setflags(write=False)
-                output.append(self.aggregation_function.compute_feature(window))
+                all_windows.append(window)
                 start = end
+                count += 1
+            windows_per_instance.append(count)
 
-            windowed_data.append(_pad_stack(output))
+        all_features = _compute_window_features(self.aggregation_function, all_windows)
+        windowed_data = []
+        start = 0
+        for count in windows_per_instance:
+            windowed_data.append(_pad_stack(all_features[start : start + count]))
+            start += count
+
         windowed_data = _pad_stack(windowed_data)
         self.assert_output_stats(windowed_data)
         return windowed_data

@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 
-from systemds.scuro import Modality
+from systemds.scuro.modality.modality import Modality
 from systemds.scuro.drsearch.modality_result_cache import RefCountResultCache
 from systemds.scuro.drsearch.modality_shared_memory import (
     add_shared_memory_candidate,
@@ -64,6 +64,24 @@ from systemds.scuro.utils.memory_utility import (
 from systemds.scuro.utils.static_variables import DEBUG
 
 _MAX_NODE_RETRIES = int(os.environ.get("SCURO_MAX_NODE_RETRIES", "3"))
+
+
+def _place_on_device(obj: Any, gpu_id: Optional[int]) -> None:
+    """Apply scheduler placement even when an object selected CUDA itself."""
+    device = torch.device("cpu" if gpu_id is None else f"cuda:{gpu_id}")
+    if hasattr(obj, "gpu_id"):
+        try:
+            obj.gpu_id = gpu_id
+        except (AttributeError, RuntimeError):
+            pass
+    if hasattr(obj, "device"):
+        try:
+            obj.device = device
+        except (AttributeError, RuntimeError):
+            pass
+    model = getattr(obj, "model", None)
+    if model is not None and hasattr(model, "to"):
+        obj.model = model.to(device)
 
 
 def _run_gpu_op(fn, gpu_id: Optional[int]):
@@ -143,12 +161,10 @@ def _execute_node_worker(node, input_mods: List[Any], gpu_id: Optional[int]):
         torch.cuda.reset_peak_memory_stats(device)
 
     node_operation = _instantiate_operation(node)
+    _place_on_device(node_operation, gpu_id)
     operation_name = node_operation.name
     if DEBUG:
         print(f"Executing node {node.node_id} {operation_name} on GPU {gpu_id}")
-
-    if gpu_id is not None and hasattr(node_operation, "gpu_id"):
-        node_operation.gpu_id = gpu_id
 
     def _run_node_op():
         if len(input_mods) == 1:
@@ -227,8 +243,7 @@ def _execute_task_worker(
         torch.cuda.set_device(device)
         torch.cuda.reset_peak_memory_stats(device)
 
-    if gpu_id is not None and hasattr(task, "model") and hasattr(task.model, "device"):
-        task.model.device = torch.device(f"cuda:{gpu_id}")
+    _place_on_device(getattr(task, "model", task), gpu_id)
 
     def _run_task():
         start = time.perf_counter()
@@ -271,17 +286,27 @@ def _execute_task_worker(
 
 
 def _execute_leaf_batch_worker(nodes: List[Any], modality: Any, gpu_id: Optional[int]):
-    node_id_by_representation = {}
-
     def _run():
         representations = []
+        representation_keys = []
+        aggregations = []
         for node in nodes:
             operation = node.operation(params=node.parameters)
-            if hasattr(operation, "gpu_id"):
-                operation.gpu_id = gpu_id
+            _place_on_device(operation, gpu_id)
             representations.append(operation)
-            node_id_by_representation[operation.name] = node.node_id
-        return modality.apply_representations(representations, parallel=True)
+            representation_keys.append(node.node_id)
+            pushdown_config = node.parameters.get("_pushdown_aggregation")
+            aggregations.append(
+                AggregatedRepresentation(params=pushdown_config)
+                if pushdown_config is not None
+                else None
+            )
+        return modality.apply_representations(
+            representations,
+            parallel=True,
+            representation_keys=representation_keys,
+            aggregations=aggregations,
+        )
 
     modality_results = _run_gpu_op(_run, gpu_id)
     shm_info = {}
@@ -297,8 +322,13 @@ def _execute_leaf_batch_worker(nodes: List[Any], modality: Any, gpu_id: Optional
         }
     return {
         "results": modality_results,
-        "node_id_by_representation": node_id_by_representation,
         "shm_info": shm_info,
+        "failed_nodes": {
+            node_id: f"{type(error).__name__}: {error}"
+            for node_id, error in getattr(
+                modality, "failed_representations", {}
+            ).items()
+        },
     }
 
 
@@ -309,7 +339,7 @@ def _load_leaf_worker(modality: Any) -> Dict[str, Any]:
     data = modality.data
     resident_bytes = 0
     try:
-        resident_bytes = modality.estimate_memory_bytes()
+        resident_bytes = modality.estimate_peak_memory_bytes()["cpu_peak_bytes"]
     except Exception:
         resident_bytes = 0
 
@@ -324,7 +354,14 @@ def _load_leaf_worker(modality: Any) -> Dict[str, Any]:
 
 def _dispatch_node(payload, gpu_id):
     node, input_mods = payload
-    return _execute_node_worker(node, input_mods, gpu_id)
+    try:
+        return _execute_node_worker(node, input_mods, gpu_id)
+    finally:
+        # CSE executes each node once; retaining its model after completion
+        # makes scheduler reservations lie about persistent worker memory.
+        _WORKER_OP_CACHE.clear()
+        if gpu_id is not None:
+            cleanup_gpu(gpu_id)
 
 
 def _dispatch_task(payload, gpu_id):
@@ -434,8 +471,19 @@ class NodeExecutor:
                 _WORKER_DISPATCH,
                 ctx=create_mp_context(),
                 threads_per_worker=threads_per_worker,
+                gpu_devices=list(getattr(self.scheduler, "gpu_devices", [])),
+                gpu_slots_per_device=int(
+                    os.environ.get("SCURO_GPU_SLOTS_PER_DEVICE", "1")
+                ),
+                gpu_demand_fraction=self.scheduler.gpu_demand_fraction(),
             )
         self._pool = worker_pool
+        restrict_devices = getattr(self.scheduler, "restrict_gpu_devices", None)
+        if callable(restrict_devices):
+            restrict_devices(
+                getattr(worker_pool, "gpu_worker_devices", []),
+                getattr(worker_pool, "gpu_slots_per_device", 1),
+            )
 
     def _requeue_or_give_up(self, node_id: str, reason: str) -> bool:
         attempts = self._node_attempts.get(node_id, 0) + 1
@@ -474,6 +522,8 @@ class NodeExecutor:
 
     def _load_leaf_modalities(self) -> None:
         for modality in self._modalities:
+            if self._loads_in_chunks(modality):
+                continue
             if getattr(modality, "has_data", None) and modality.has_data():
                 continue
             attempts = 0
@@ -494,12 +544,19 @@ class NodeExecutor:
             if shm_name is not None:
                 self._leaf_shm_names.append(shm_name)
 
+    @staticmethod
+    def _loads_in_chunks(modality: Any) -> bool:
+        data_loader = getattr(modality, "data_loader", None)
+        return getattr(data_loader, "chunk_size", None) is not None
+
     def _cleanup_leaf_shared_memory(self) -> None:
         for shm_name in self._leaf_shm_names:
             unlink_shm(shm_name)
         self._leaf_shm_names = []
 
-    def _submit_node(self, node_id: str) -> None:
+    def _submit_node(
+        self, node_id: str, allow_gpu_worker_for_cpu: bool = False
+    ) -> None:
         node = self.scheduler.mapping[node_id]
         gpu_id = node.gpu_id
         parent_ids = self.scheduler.get_valid_parents(node_id)
@@ -523,18 +580,26 @@ class NodeExecutor:
                 "task",
                 (node_id, self._tasks[task_idx], payload, node.aggregation),
                 gpu_id=gpu_id,
+                allow_gpu_worker_for_cpu=allow_gpu_worker_for_cpu,
             )
         else:
             payload = self._modalities if parent_results is None else parent_results
             retained = self._retain_for_submit(parent_ids, payload)
             self.scheduler.begin_execution(node_id)
             self.scheduler.move_to_running(node_id)
-            job_id = self._pool.submit("node", (node, payload), gpu_id=gpu_id)
+            job_id = self._pool.submit(
+                "node",
+                (node, payload),
+                gpu_id=gpu_id,
+                allow_gpu_worker_for_cpu=allow_gpu_worker_for_cpu,
+            )
 
         self._job_units[job_id] = _NodeUnit(node_id)
         self._job_retained_shm[job_id] = retained
 
-    def _submit_leaf_batch(self, node_ids: List[str]) -> None:
+    def _submit_leaf_batch(
+        self, node_ids: List[str], allow_gpu_worker_for_cpu: bool = False
+    ) -> None:
         nodes = [self.scheduler.mapping[nid] for nid in node_ids]
         gpu_id = nodes[0].gpu_id
         retained = self._retain_for_submit([], self._modalities[0].data)
@@ -542,22 +607,42 @@ class NodeExecutor:
             self.scheduler.begin_execution(nid)
         self.scheduler.move_to_running(node_ids)
         job_id = self._pool.submit(
-            "leaf_batch", (nodes, self._modalities[0]), gpu_id=gpu_id
+            "leaf_batch",
+            (nodes, self._modalities[0]),
+            gpu_id=gpu_id,
+            allow_gpu_worker_for_cpu=allow_gpu_worker_for_cpu,
         )
         self._job_units[job_id] = _BatchUnit(node_ids)
         self._job_retained_shm[job_id] = retained
 
     def _fill_pipeline(self) -> None:
         ready = self.scheduler.get_runnable().copy()
+
+        def _gpu_id(entry):
+            node_id = entry[0] if isinstance(entry, list) else entry
+            return self.scheduler.mapping[node_id].gpu_id
+
+        ready.sort(key=lambda entry: _gpu_id(entry) is None)
         for entry in ready:
-            if not self._pool.has_idle_worker:
-                break
+            gpu_id = _gpu_id(entry)
+            allow_gpu_worker_for_cpu = gpu_id is None
+            if not self._pool.has_idle_worker_for(
+                gpu_id,
+                allow_gpu_worker_for_cpu=allow_gpu_worker_for_cpu,
+            ):
+                continue
             if isinstance(entry, list):
-                self._submit_leaf_batch(entry)
+                self._submit_leaf_batch(
+                    entry,
+                    allow_gpu_worker_for_cpu=allow_gpu_worker_for_cpu,
+                )
             else:
                 if not self.scheduler.can_start_now(entry):
                     continue
-                self._submit_node(entry)
+                self._submit_node(
+                    entry,
+                    allow_gpu_worker_for_cpu=allow_gpu_worker_for_cpu,
+                )
 
     def _record_stats(self, node_id: str, pid: int, start_time: float, end_time: float):
         node_stats = self.statistics["node_stats"]
@@ -648,22 +733,24 @@ class NodeExecutor:
 
     def _handle_batch_success(self, value: Dict[str, Any]) -> None:
         results = value["results"]
-        node_id_by_representation = value["node_id_by_representation"]
         shm_info = value.get("shm_info", {})
-        for representation, transformed_modality in results.items():
-            node_id = node_id_by_representation[representation]
-            info = shm_info.get(representation, {})
+        for node_id, transformed_modality in results.items():
+            info = shm_info.get(node_id, {})
             self._handle_modality_result(
                 transformed_modality,
                 node_id,
                 None,
                 None,
-                representation,
+                self.scheduler.mapping[node_id].operation.__name__,
                 actual_stats=info.get("actual_stats"),
                 shm_name=info.get("shm_name"),
                 resident_bytes=info.get("resident_bytes"),
                 shm_bytes=info.get("shm_bytes", 0),
             )
+
+        for node_id, reason in value.get("failed_nodes", {}).items():
+            if not self._requeue_or_give_up(node_id, reason):
+                self._release_parents(node_id)
 
     def _handle_modality_result(
         self,

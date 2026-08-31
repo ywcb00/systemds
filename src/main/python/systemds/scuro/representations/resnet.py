@@ -21,6 +21,14 @@
 from systemds.scuro.dataloader.image_loader import ImageStats
 from systemds.scuro.dataloader.video_loader import VideoStats
 from systemds.scuro.representations.representation import RepresentationStats
+from systemds.scuro.representations.utils import (
+    OwnerAccumulator,
+    flatten_owned_sequences,
+    get_sequence_lengths,
+    inference_context,
+    move_batch_to_device,
+    pin_memory_for,
+)
 from systemds.scuro.utils.torch_dataset import CustomDataset
 from systemds.scuro.modality.transformed import TransformedModality
 from systemds.scuro.representations.unimodal import UnimodalRepresentation
@@ -41,6 +49,9 @@ class Identity(torch.nn.Module):
 
 @register_representation([ModalityType.IMAGE, ModalityType.VIDEO])
 class ResNet(UnimodalRepresentation):
+    supports_aggregation_pushdown = True
+    cache_in_worker = True
+
     def __init__(
         self,
         model_name="ResNet18",
@@ -51,6 +62,8 @@ class ResNet(UnimodalRepresentation):
     ):
         self.data_type = torch.float32
         self.model = None
+        self._activation_hook = None
+        self.activation = None
         self.gpu_id = None
         self.device = get_device()
         if params is not None:
@@ -63,6 +76,7 @@ class ResNet(UnimodalRepresentation):
         self.model_name = model_name
         parameters = self._get_parameters()
         super().__init__("ResNet", ModalityType.EMBEDDING, parameters)
+        self.params = params
 
         self.output_file = output_file
         self.model.eval()
@@ -116,16 +130,15 @@ class ResNet(UnimodalRepresentation):
             raise NotImplementedError
 
     def estimate_output_memory_bytes(self, input_stats: ImageStats) -> int:
-        if isinstance(input_stats, VideoStats):
-            return (
-                input_stats.num_instances
-                * input_stats.max_length
-                * 512
-                * self.data_type.itemsize
-            )
-        return input_stats.num_instances * 512 * self.data_type.itemsize
+        shape = self.get_output_stats(input_stats).output_shape
+        return int(input_stats.num_instances * np.prod(shape) * self.data_type.itemsize)
 
     def get_output_stats(self, input_stats) -> RepresentationStats:
+        if self.params and "_pushdown_aggregation" in self.params:
+            return RepresentationStats(
+                input_stats.num_instances, (512,), aggregate_dim=None
+            )
+
         if isinstance(input_stats, VideoStats):
             return RepresentationStats(
                 input_stats.num_instances,
@@ -178,7 +191,11 @@ class ResNet(UnimodalRepresentation):
         return {"cpu_peak_bytes": cpu_peak, "gpu_peak_bytes": gpu_peak}
 
     def _get_parameters(self, high_level=True):
-        parameters = {"model_name": [], "layer_name": []}
+        parameters = {
+            "batch_size": [1, 2, 4, 8, 16, 32, 64, 128],
+            "model_name": [],
+            "layer_name": [],
+        }
         for m in ["ResNet18", "ResNet34", "ResNet50", "ResNet101", "ResNet152"]:
             parameters["model_name"].append(m)
 
@@ -199,76 +216,68 @@ class ResNet(UnimodalRepresentation):
     def transform(self, modality, aggregation=None):
         if next(self.model.parameters()).dtype != self.data_type:
             self.model = self.model.to(self.data_type)
-
-        embeddings = {}
-        dataset = CustomDataset(modality.data, self.data_type, self.device)
-        res5c_output = None
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        self.activation = None
 
         def get_features(name_):
             def hook(
                 _module: torch.nn.Module, input_: Tuple[torch.Tensor], output: Any
             ):
-                nonlocal res5c_output
-                res5c_output = output
+                self.activation = output
 
             return hook
 
-        if self.layer_name:
+        if self.layer_name and self._activation_hook is None:
             for name, layer in self.model.named_modules():
                 if name == self.layer_name:
-                    layer.register_forward_hook(get_features(name))
+                    self._activation_hook = layer.register_forward_hook(
+                        get_features(name)
+                    )
                     break
 
-        if modality.modality_type == ModalityType.IMAGE:
-            embeddings = []
-            for batch in torch.utils.data.DataLoader(
-                dataset, batch_size=self.batch_size
-            ):
-                image_batch = batch["data"]
-                _ = self.model(image_batch)
-                output = res5c_output
-                embeddings.extend(
-                    output.squeeze().detach().cpu().numpy().astype(modality.data_type)
-                )
-                torch.cuda.empty_cache()
+        is_image = modality.modality_type == ModalityType.IMAGE
+        if is_image:
+            samples = modality.data
+            owner_ids = list(range(len(samples)))
         else:
-            for instance in torch.utils.data.DataLoader(dataset):
-                video_id = instance["id"][0]
-                frames = instance["data"][0]
-                embeddings[video_id] = []
-                batch_size = 64
+            lengths = get_sequence_lengths(modality.data, modality.metadata)
+            samples, owner_ids = flatten_owned_sequences(modality.data, lengths)
 
-                if modality.modality_type == ModalityType.IMAGE:
-                    frames = frames.unsqueeze(0)
+        dataset = CustomDataset(samples, self.data_type, "cpu")
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin_memory_for(self.device),
+        )
+        owner_by_chunk = torch.tensor(owner_ids, dtype=torch.long)
+        accumulator = OwnerAccumulator(len(modality.data), len(dataset), aggregation)
 
-                for start_index in range(0, len(frames), batch_size):
-                    end_index = min(start_index + batch_size, len(frames))
-                    frame_ids_range = range(start_index, end_index)
-                    frame_batch = frames[frame_ids_range]
+        with inference_context(self.device):
+            for batch in dataloader:
+                chunk_ids = batch["id"].long()
+                batch = move_batch_to_device(batch, self.device)
+                _ = self.model(batch["data"])
+                output = self.activation
+                if output.ndim > 2:
+                    output = torch.nn.functional.adaptive_avg_pool2d(output, (1, 1))
+                accumulator.update(
+                    torch.flatten(output, 1),
+                    owner_by_chunk.index_select(0, chunk_ids),
+                    chunk_ids,
+                )
 
-                    _ = self.model(frame_batch)
-                    output = res5c_output
-                    if len(output.shape) > 2:
-                        output = torch.nn.functional.adaptive_avg_pool2d(output, (1, 1))
-                    # TODO: check if the dimensions are correct here
-                    embeddings[video_id].extend(
-                        torch.flatten(output, 1)
-                        .detach()
-                        .cpu()
-                        .float()
-                        .numpy()
-                        .astype(np.float32)
-                    )
-
-                embeddings[video_id] = np.array(embeddings[video_id])
+        embeddings = accumulator.finalize(grouped=not is_image and aggregation is None)
+        if is_image and aggregation is None:
+            embeddings = list(embeddings)
 
         transformed_modality = TransformedModality(
             modality, self, self.output_modality_type
         )
-
-        if isinstance(embeddings, dict):
-            transformed_modality.data = list(embeddings.values())
-        else:
-            transformed_modality.data = embeddings
-
+        transformed_modality.data_type = np.float32
+        transformed_modality.aggregate_dim = (
+            None if aggregation is not None or is_image else (0,)
+        )
+        transformed_modality.data = embeddings
         return transformed_modality

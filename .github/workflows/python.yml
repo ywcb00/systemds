@@ -167,7 +167,7 @@ jobs:
         pip install --upgrade pip wheel setuptools
         # Use CUDA 12.1 wheels to avoid slow/source builds
         pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
-          torch==2.4.1 torchvision==0.19.1
+          torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1
         pip install \
           transformers \
           opencv-python \
@@ -179,7 +179,10 @@ jobs:
           fvcore \
           scikit-optimize \
           flair \
-          optuna 
+          optuna \
+          openface-test \
+          imagebind \
+         "pytorchvideo @ git+https://github.com/facebookresearch/pytorchvideo.git@eb04d1b"
         kill $KA 
         cd src/main/python
         python -m unittest discover -s tests/scuro -p 'test_*.py' -v

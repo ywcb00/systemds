@@ -29,6 +29,16 @@ from systemds.scuro.representations.representation import RepresentationStats
 from systemds.scuro.representations.unimodal import UnimodalRepresentation
 from systemds.scuro.drsearch.operator_registry import register_representation
 from systemds.scuro.utils.memory_utility import get_device
+from systemds.scuro.representations.utils import (
+    LengthBucketBatchSampler,
+    OwnerAccumulator,
+    OwnedSequenceDataset,
+    move_batch_to_device,
+    pin_memory_for,
+    pool_transformer_output,
+    transformer_inference_context,
+)
+from torch.utils.data import DataLoader
 
 from transformers.utils import logging as transformers_logging
 
@@ -38,14 +48,18 @@ transformers_logging.set_verbosity_error()
 @register_representation(ModalityType.AUDIO)
 class Wav2Vec(UnimodalRepresentation):
     cache_in_worker = True
-    instance_parallel = True
+    instance_parallel = False
 
     MODEL_NAME = "facebook/wav2vec2-base-960h"
 
-    def __init__(self, params=None):
-        super().__init__("Wav2Vec", ModalityType.TIMESERIES, {})
+    def __init__(self, batch_size=8, params=None):
+        parameters = {"batch_size": [1, 2, 4, 8, 16, 32, 64]}
+        super().__init__("Wav2Vec", ModalityType.TIMESERIES, parameters)
+        self.batch_size = int((params or {}).get("batch_size", batch_size))
         self._processor = None
         self._model = None
+        self.gpu_id = None
+        self.device = get_device()
 
     @staticmethod
     def _from_pretrained(loader_cls, name):
@@ -66,29 +80,80 @@ class Wav2Vec(UnimodalRepresentation):
             self._model = self._from_pretrained(Wav2Vec2Model, self.MODEL_NAME).float()
         return self._model
 
+    @property
+    def gpu_id(self):
+        return self._gpu_id
+
+    @gpu_id.setter
+    def gpu_id(self, gpu_id):
+        self._gpu_id = gpu_id
+        self.device = get_device(gpu_id)
+
     def transform(self, modality, aggregation=None):
         transformed_modality = TransformedModality(
             modality, self, self.output_modality_type
         )
+        samples = [
+            librosa.resample(
+                np.asarray(sample),
+                orig_sr=modality.metadata[owner_id]["frequency"],
+                target_sr=16000,
+            )
+            for owner_id, sample in enumerate(modality.data)
+        ]
+        dataset = OwnedSequenceDataset(samples)
+        lengths = [len(sample) for sample in samples]
 
-        result = []
-        for i, sample in enumerate(modality.data):
-            sr = modality.metadata[i]["frequency"]
-            audio_resampled = librosa.resample(
-                np.array(sample), orig_sr=sr, target_sr=16000
+        def collate(batch):
+            audio, owner_ids, chunk_ids = zip(*batch)
+            inputs = self.processor(
+                list(audio),
+                sampling_rate=16000,
+                return_tensors="pt",
+                padding=True,
+                return_attention_mask=True,
             )
-            input = self.processor(
-                audio_resampled, sampling_rate=16000, return_tensors="pt", padding=True
+            inputs = dict(inputs)
+            inputs["input_values"] = inputs["input_values"].float()
+            return (
+                inputs,
+                torch.tensor(owner_ids, dtype=torch.long),
+                torch.tensor(chunk_ids, dtype=torch.long),
             )
-            input.input_values = input.input_values.float()
-            input.data["input_values"] = input.data["input_values"].float()
-            with torch.no_grad():
-                outputs = self.model(**input)
+
+        dataloader = DataLoader(
+            dataset,
+            batch_sampler=LengthBucketBatchSampler(lengths, self.batch_size),
+            collate_fn=collate,
+            pin_memory=pin_memory_for(self.device),
+        )
+        model = self.model.to(self.device)
+        model.eval()
+        accumulator = OwnerAccumulator(len(dataset), len(dataset), aggregation)
+
+        with transformer_inference_context(self.device):
+            for inputs, owner_ids, chunk_ids in dataloader:
+                inputs = move_batch_to_device(inputs, self.device)
+                outputs = model(**inputs)
                 features = outputs.extract_features
-                # TODO: check how to get intermediate representations
-            result.append(torch.flatten(features.mean(dim=1)).detach().cpu().numpy())
+                attention_mask = inputs.get("attention_mask")
+                if attention_mask is not None and hasattr(
+                    model, "_get_feature_vector_attention_mask"
+                ):
+                    attention_mask = model._get_feature_vector_attention_mask(
+                        features.shape[1], attention_mask
+                    )
+                elif attention_mask is None:
+                    attention_mask = torch.ones(
+                        features.shape[:2],
+                        dtype=torch.long,
+                        device=features.device,
+                    )
+                pooled = pool_transformer_output(features, attention_mask)
+                accumulator.update(pooled, owner_ids, chunk_ids)
 
-        transformed_modality.data = np.array(result)
+        transformed_modality.data = accumulator.finalize()
+        transformed_modality.data_type = np.float32
         return transformed_modality
 
     def get_output_stats(self, input_stats) -> RepresentationStats:

@@ -21,6 +21,8 @@
 
 
 class Model:
+    uses_gpu = None
+
     def __init__(self, name: str):
         """
         Parent class for models used to perform a given task
