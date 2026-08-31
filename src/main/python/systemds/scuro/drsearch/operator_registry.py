@@ -47,9 +47,9 @@ class Registry:
 
     def set_fusion_operators(self, fusion_operators):
         if isinstance(fusion_operators, list):
-            self._fusion_operators = fusion_operators
+            type(self)._fusion_operators = fusion_operators
         else:
-            self._fusion_operators = [fusion_operators]
+            type(self)._fusion_operators = [fusion_operators]
 
     def set_representations(self, modality_type, representations):
         if isinstance(representations, list):
@@ -89,7 +89,7 @@ class Registry:
             self._context_operators[m_type].append(context_operator)
 
     def add_fusion_operator(self, fusion_operator):
-        self._fusion_operators.append(fusion_operator)
+        type(self)._fusion_operators.append(fusion_operator)
 
     def add_dimensionality_reduction_operator(
         self, dimensionality_reduction_operator, modality_type
@@ -134,10 +134,10 @@ class Registry:
         return self._dimensionality_reduction_operators.get(modality_type, [])
 
     def get_fusion_operators(self):
-        return self._fusion_operators
+        return type(self)._fusion_operators
 
     def get_fusion_operator_by_name(self, fusion_name):
-        for fusion in self._fusion_operators:
+        for fusion in type(self)._fusion_operators:
             if fusion.__name__ == fusion_name:
                 return fusion
         return None

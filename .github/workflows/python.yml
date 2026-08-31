@@ -180,6 +180,7 @@ jobs:
           scikit-optimize \
           flair \
           optuna \
+          deap \
           openface-test \
           imagebind \
          "pytorchvideo @ git+https://github.com/facebookresearch/pytorchvideo.git@eb04d1b"
