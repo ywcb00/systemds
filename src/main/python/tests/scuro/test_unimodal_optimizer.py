@@ -21,11 +21,16 @@
 
 
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 from systemds.scuro.representations.color_histogram import ColorHistogram
 from systemds.scuro.drsearch.operator_registry import Registry
-from systemds.scuro.drsearch.unimodal_optimizer import UnimodalOptimizer
+from systemds.scuro.drsearch.node_executor import ResultEntry
+from systemds.scuro.drsearch.unimodal_optimizer import (
+    UnimodalOptimizer,
+    UnimodalResults,
+)
 from systemds.scuro.representations.covarep_audio_features import ZeroCrossing
 
 from systemds.scuro.representations.covarep_audio_features import (
@@ -132,6 +137,30 @@ class TestUnimodalRepresentationOptimizer(unittest.TestCase):
             )
         )
         self.optimize_unimodal_representation_for_modality([text])
+
+    def test_robust_results_ignore_non_finite_scores(self):
+        modality = SimpleNamespace(modality_id="modality")
+        task = SimpleNamespace(model=SimpleNamespace(name="task"))
+        results = UnimodalResults([modality], [task], k=2)
+        scores = [0.8, np.nan, np.inf, -np.inf, None, 0.6]
+        entries = [
+            ResultEntry(
+                val_score=None if score is None else {"accuracy": score},
+                dag=SimpleNamespace(
+                    nodes=[SimpleNamespace(operation=UnimodalOptimizer)]
+                ),
+            )
+            for score in scores
+        ]
+        results.results[modality.modality_id][task.model.name] = entries
+
+        robust, indices = results.get_k_most_robust_results(
+            modality, task, "accuracy", one_se_parsimony=False
+        )
+
+        self.assertEqual(robust, [entries[0], entries[5]])
+        self.assertEqual(indices, [0, 5])
+        self.assertTrue(all(np.isfinite(entry.robustness_score) for entry in robust))
 
     def test_bow_and_tfidf_require_dimensionality_reduction_before_task(self):
         text_data, text_md = ModalityRandomDataGenerator().create_text_data(

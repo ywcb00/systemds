@@ -52,11 +52,13 @@ class TimeseriesLoader(BaseLoader):
         normalize: bool = True,
         file_format: str = "npy",
         modality_type: Optional[ModalityType] = ModalityType.TIMESERIES,
+        channel_index: Optional[int] = None,
     ):
         super().__init__(source_path, indices, data_type, chunk_size, modality_type)
         self.signal_names = signal_names
         self.sampling_rate = sampling_rate
         self.normalize = normalize
+        self.channel_index = channel_index
         self.file_format = file_format.lower()
         self.stats = self.get_stats(source_path, sampling_rate)
         if self.file_format not in ["npy", "mat", "hdf5", "txt"]:

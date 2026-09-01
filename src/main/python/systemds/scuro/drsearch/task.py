@@ -62,6 +62,18 @@ class PerformanceMeasure:
             self.average_scores[self.metrics] = np.mean(self.scores[self.metrics])
         return self
 
+    def fold_scores(self):
+        return {
+            metric: [float(v) for v in values] for metric, values in self.scores.items()
+        }
+
+    def score_stds(self):
+        """Per-metric standard deviation across folds (0.0 for a single fold)."""
+        return {
+            metric: (float(np.std(values, ddof=1)) if len(values) > 1 else 0.0)
+            for metric, values in self.scores.items()
+        }
+
 
 class Task:
     def __init__(
@@ -95,6 +107,7 @@ class Task:
         self.measure_performance = measure_performance
         self.inference_time = []
         self.training_time = []
+        self.last_run_timing = {}
         self.expected_dim = 1
         self.performance_measures = performance_measures
         self.train_scores = PerformanceMeasure("train", performance_measures)
@@ -286,11 +299,108 @@ class Task:
         if hasattr(model, "clean_up"):
             model.clean_up()
             del model
+
+        self.last_run_timing = {
+            "train_time_per_fold_s": list(self.training_time),
+            "test_inference_time_per_fold_s": list(self.inference_time),
+            "train_time_mean_s": (
+                float(np.mean(self.training_time)) if self.training_time else 0.0
+            ),
+            "test_inference_time_mean_s": (
+                float(np.mean(self.inference_time)) if self.inference_time else 0.0
+            ),
+            "n_test_instances": len(self.test_indices) if self.test_indices else 0,
+        }
         return [
             self.train_scores.compute_averages(),
             self.val_scores.compute_averages(),
             self.test_scores.compute_averages(),
         ]
+
+    def fit_once_and_time_inference(
+        self, data, latency_repeats: int = 200, latency_warmup: int = 20
+    ):
+        model = self.create_model()
+
+        train_X = self._gather_by_indices(data, self.train_indices)
+        train_y = self._gather_by_indices(self.labels, self.train_indices)
+        test_X = self._gather_by_indices(data, self.test_indices)
+        test_y = self._gather_by_indices(self.labels, self.test_indices)
+
+        t0 = time.perf_counter()
+        model.fit(train_X, train_y, test_X, test_y)
+        fit_time = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        test_score = model.test(np.asarray(test_X), test_y)
+        batch_inference_time = time.perf_counter() - t0
+
+        latency = self._measure_single_sample_latency(
+            model, test_X, test_y, latency_repeats, latency_warmup
+        )
+
+        scores = PerformanceMeasure("test_single_fit", self.performance_measures)
+        scores.add_scores(test_score[0])
+        scores.compute_averages()
+
+        if hasattr(model, "clean_up"):
+            model.clean_up()
+
+        n_test = len(test_X)
+        return {
+            "single_fit_train_time_s": fit_time,
+            "test_batch_inference_time_s": batch_inference_time,
+            "test_inference_time_per_instance_ms": (
+                batch_inference_time / n_test * 1000.0 if n_test else 0.0
+            ),
+            "n_test_instances": n_test,
+            "single_fit_test_scores": scores.average_scores,
+            **latency,
+        }
+
+    @staticmethod
+    def _prediction_callable(model):
+        if hasattr(model, "predict"):
+            return model.predict, "model.predict"
+        clf = getattr(model, "clf", None)
+        if clf is not None and hasattr(clf, "predict"):
+            return clf.predict, "clf.predict"
+        return None, None
+
+    def _measure_single_sample_latency(
+        self, model, test_X, test_y, repeats: int, warmup: int
+    ):
+        empty = {
+            "inference_latency_ms_median": None,
+            "inference_latency_ms_p95": None,
+            "inference_latency_samples": 0,
+            "inference_latency_source": None,
+        }
+        if repeats <= 0 or not len(test_X):
+            return empty
+
+        predict, source = self._prediction_callable(model)
+        if predict is None:
+            return empty
+
+        timings = []
+        for i in range(warmup + repeats):
+            sample_X = np.asarray([test_X[i % len(test_X)]])
+            t0 = time.perf_counter()
+            try:
+                predict(sample_X)
+            except Exception:
+                return empty
+            elapsed = (time.perf_counter() - t0) * 1000.0
+            if i >= warmup:
+                timings.append(elapsed)
+
+        return {
+            "inference_latency_ms_median": float(np.median(timings)),
+            "inference_latency_ms_p95": float(np.percentile(timings, 95)),
+            "inference_latency_samples": len(timings),
+            "inference_latency_source": source,
+        }
 
     def _reset_params(self):
         self.inference_time = []

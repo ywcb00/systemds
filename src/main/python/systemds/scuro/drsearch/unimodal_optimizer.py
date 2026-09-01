@@ -30,7 +30,7 @@ from functools import lru_cache
 from systemds.scuro.modality.type import ModalityType
 from systemds.scuro.drsearch.node_executor import NodeExecutor, ResultEntry
 from systemds.scuro.representations.representation import RepresentationStats
-from systemds.scuro.drsearch.ranking import rank_by_tradeoff
+from systemds.scuro.drsearch.ranking import rank_by_tradeoff, rank_by_robustness
 from systemds.scuro.drsearch.task import PerformanceMeasure
 from systemds.scuro.representations.concatenation import Concatenation
 from systemds.scuro.representations.hadamard import Hadamard
@@ -993,6 +993,27 @@ class UnimodalResults:
                 ] = cache
 
         return results, cache
+
+    def get_k_most_robust_results(
+        self,
+        modality,
+        task,
+        performance_metric_name,
+        k=None,
+        neighbourhood_weight=0.5,
+        one_se_parsimony=True,
+    ):
+        task_results = self.results[modality.modality_id][task.model.name]
+
+        results, sorted_indices = rank_by_robustness(
+            task_results,
+            performance_metric_name=performance_metric_name,
+            neighbourhood_weight=neighbourhood_weight,
+            one_se_parsimony=one_se_parsimony,
+        )
+
+        limit = self.k if k is None else k
+        return results[:limit], sorted_indices[:limit]
 
     def add_worker_stat(self, worker_stats, modality_id):
         self.worker_stats[modality_id] = worker_stats
