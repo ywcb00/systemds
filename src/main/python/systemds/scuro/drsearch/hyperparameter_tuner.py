@@ -38,6 +38,8 @@ from systemds.scuro.modality.modality import Modality
 from systemds.scuro.drsearch.task import PerformanceMeasure
 import pickle
 from systemds.scuro.utils.checkpointing import CheckpointManager
+from systemds.scuro.drsearch.process_cache import HPOExecutionCache
+from systemds.scuro.drsearch.operator_registry import is_expensive_representation
 
 
 def _wandb_safe_tag(s: str, max_len: int = 64) -> str:
@@ -319,6 +321,7 @@ class HyperparameterTuner:
         wandb_group: Optional[str] = None,
         wandb_tags: Optional[List[str]] = None,
         enable_checkpointing: bool = False,
+        representation_cache_size: int = 128,
     ):
         self.tasks = tasks
         self.unimodal_optimization_results = optimization_results
@@ -356,6 +359,14 @@ class HyperparameterTuner:
         self.wandb_tags = wandb_tags or []
         self._wandb_run = None
         self.enable_checkpointing = enable_checkpointing
+
+        self.execution_cache = HPOExecutionCache(
+            representation_entries=representation_cache_size,
+            should_cache_representation=self._should_cache_representation,
+        )
+
+    def _should_cache_representation(self, operation: Any) -> bool:
+        return is_expensive_representation(operation)
 
     def get_modalities_by_id(self, modality_ids: List[int]) -> Modality:
         modalities = []
@@ -1004,15 +1015,14 @@ class HyperparameterTuner:
                 if modalities_override is not None
                 else self.get_modalities_by_id(modality_ids)
             )
-            modified_modality = dag_copy.execute(modalities, task)
+            modified_modality = dag_copy.execute(
+                modalities, task, execution_cache=self.execution_cache
+            )
             score = task.run(modified_modality.data)
 
             return params, score
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            self.logger.error(f"Error evaluating DAG with params {params}: {e}")
+            self.logger.warning("Skipping invalid DAG candidate %s: %s", params, e)
             return params, [np.nan, np.nan, np.nan]
 
     def tune_multimodal_representations(

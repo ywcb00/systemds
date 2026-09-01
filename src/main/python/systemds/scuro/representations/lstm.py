@@ -52,7 +52,7 @@ class LSTM(Fusion):
             "dropout_rate": [0.1, 0.2, 0.3, 0.4, 0.5],
             "learning_rate": [0.001, 0.0001, 0.01, 0.1],
             "epochs": [10, 20, 50, 100, 200],
-            "batch_size": [8, 16, 32, 64, 128],
+            # "batch_size": [8, 16, 32, 64, 128],
         }
 
         super().__init__("LSTM", parameters)
@@ -63,7 +63,7 @@ class LSTM(Fusion):
             dropout_rate = params.get("dropout_rate", dropout_rate)
             learning_rate = params.get("learning_rate", learning_rate)
             epochs = params.get("epochs", epochs)
-            batch_size = params.get("batch_size", batch_size)
+            batch_size = int((params or {}).get("batch_size", batch_size))
 
         self.width = int(width)
         self.depth = int(depth)
