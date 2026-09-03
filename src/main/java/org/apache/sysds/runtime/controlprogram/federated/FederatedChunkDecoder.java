@@ -68,6 +68,12 @@ public class FederatedChunkDecoder extends MessageToMessageDecoder<ByteBuf> {
 		}
 	}
 
+	@Override
+	public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+		_payloads.add(new IOException("Channel closed before the federated chunk stream ended."));
+		super.channelInactive(ctx);
+	}
+
 	/**
 	 * Start the deserializer on a pool thread, at most once per channel.
 	 *
@@ -87,8 +93,10 @@ public class FederatedChunkDecoder extends MessageToMessageDecoder<ByteBuf> {
 	 * @param ctx handler context
 	 */
 	private void runDeserializer(ChannelHandlerContext ctx) {
-		try(ObjectInputStream ois = getObjectInputStream(new PayloadInputStream(this, ctx))) {
+		try(PayloadInputStream in = new PayloadInputStream(this, ctx);
+			ObjectInputStream ois = getObjectInputStream(in)) {
 			Object msg = ois.readObject();
+			in.skipToEndOfStream();
 			ctx.channel().eventLoop().execute(() -> ctx.fireChannelRead(msg));
 		}
 		catch(Throwable t) {
@@ -177,6 +185,24 @@ public class FederatedChunkDecoder extends MessageToMessageDecoder<ByteBuf> {
 		}
 
 		/**
+		 * Take the next payload and resume reading if the queue has drained.
+		 *
+		 * @return payload bytes, the end of stream marker or a queued failure
+		 * @throws IOException on interrupt
+		 */
+		private Object take() throws IOException {
+			try {
+				Object next = _decoder.nextPayload();
+				_decoder.resumeReadingIfDrained(_ctx);
+				return next;
+			}
+			catch(InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new IOException(e);
+			}
+		}
+
+		/**
 		 * Advance to the next payload when the current one is exhausted. A queued failure is rethrown as an
 		 * IOException.
 		 *
@@ -201,20 +227,14 @@ public class FederatedChunkDecoder extends MessageToMessageDecoder<ByteBuf> {
 		}
 
 		/**
-		 * Take the next payload and resume reading if the queue has drained.
+		 * Consume the remaining frames up to and including the end of stream marker.
 		 *
-		 * @return payload bytes, the end of stream marker or a queued failure
-		 * @throws IOException on interrupt
+		 * @throws IOException on a queued failure or on interrupt
 		 */
-		private Object take() throws IOException {
-			try {
-				Object next = _decoder.nextPayload();
-				_decoder.resumeReadingIfDrained(_ctx);
-				return next;
-			}
-			catch(InterruptedException e) {
-				Thread.currentThread().interrupt();
-				throw new IOException(e);
+		void skipToEndOfStream() throws IOException {
+			while(!_eof) {
+				_pos = _current.length;
+				ensureCurrent();
 			}
 		}
 	}
