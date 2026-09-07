@@ -42,11 +42,17 @@ public class RewriteSplitDagUnknownNnzRead extends StatementBlockRewriteRule {
 
 	@Override
 	public List<StatementBlock> rewriteStatementBlock(StatementBlock sb, ProgramRewriteStatus state) {
+		long t0_a, t1_a;
+		t0_a = System.nanoTime();
 		ArrayList<StatementBlock> ret = new ArrayList<>();
 
 		// collect all read hops w/ unknown nnz
 		ArrayList<Hop> cand = new ArrayList<>();
+		long t0, t1;
+		t0 = System.nanoTime();
 		collectReadHopsUnknownNnz(sb.getHops(), cand);
+		t1 = System.nanoTime();
+		LOG.info("SparsityExperimentLog;;time;;collectReadHopsUnknownNnz;;" + ((double)(t1 - t0) * 1e-9) + ";;sec.");
 
 		// split hop dag on demand
 		if(!cand.isEmpty()) {
@@ -105,6 +111,8 @@ public class RewriteSplitDagUnknownNnzRead extends StatementBlockRewriteRule {
 			ret.add(sb);
 		}
 
+		t1_a = System.nanoTime();
+		LOG.info("SparsityExperimentLog;;time;;rewriteStatementBlockMethodRewriteSplitDagUnknownNnz;;" + ((double)(t1_a - t0_a) * 1e-9) + ";;sec.");
 		return ret;
 	}
 

@@ -46,6 +46,9 @@ public class RewriteMatrixMultChainOptimizationSparse extends RewriteMatrixMultC
 {
 	@Override
 	protected void optimizeMMChain(Hop hop, List<Hop> mmChain, List<Hop> mmOperators, ProgramRewriteStatus state) {
+		long t0, t1;
+		t0 = System.nanoTime();
+
 		// Step 2: construct dims array and input matrices
 		double[] dimsArray = new double[mmChain.size() + 1];
 		boolean dimsKnown = getDimsArray( hop, mmChain, dimsArray );
@@ -65,6 +68,9 @@ public class RewriteMatrixMultChainOptimizationSparse extends RewriteMatrixMultC
 			LOG.trace("Optimal Sparse MM Chain:");
 			mmChainRelinkHops(mmOperators.get(0), 0, size - 1, mmChain, mmOperators, new MutableInt(1), split, 1);
 		}
+
+		t1 = System.nanoTime();
+		LOG.info("SparsityExperimentLog;;time;;optimizeMMChainRMMChainOptimizationSparse;;" + ((double)(t1 - t0) * 1e-9) + ";;sec.");
 	}
 	
 	/**
