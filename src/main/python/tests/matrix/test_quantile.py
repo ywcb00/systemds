@@ -32,7 +32,7 @@ w2 = np.array([1, 1, 1, 1, 5])
 
 
 def weighted_quantiles(values, weights, quantiles=0.5):
-    # SYSTEMDS-3953: DML quantile default is now R type 7. Reference must interpolate the
+    # DML quantile method corresponds to R type 7. Thus, the reference must interpolate the
     # weighted-rank pair (lo, hi) with g = h - floor(h) instead of picking a single rank.
     i = np.argsort(values)
     sv = values[i]

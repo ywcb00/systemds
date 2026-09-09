@@ -4762,7 +4762,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock<MatrixBlock>,
 	 * when g == 0 or hi == lo (the p == 1 upper-bound clamp). Used by single-block picking and the distributed and
 	 * federated pick paths.
 	 */
-	public static double[] computeType7Rank(long n, double p) {
+	public static double[] computeQuantileRank(long n, double p) {
 		final double h = (n - 1) * p + 1.0;
 		final double lo = Math.max(1.0, Math.min(Math.floor(h), (double) n));
 		return new double[] {lo, Math.min(lo + 1.0, (double) n), h - Math.floor(h)};
@@ -4827,20 +4827,20 @@ public class MatrixBlock extends MatrixValue implements CacheBlock<MatrixBlock>,
 	}
 
 	private double pickUnweightedValue(double quantile) {
-		final double[] r = computeType7Rank(getNumRows(), quantile);
+		final double[] r = computeQuantileRank(getNumRows(), quantile);
 		final long lo = (long) r[0], hi = (long) r[1];
 		final double g = r[2];
 		final double loVal = get((int) (lo - 1), 0);
-		return (g == 0.0 || hi == lo) ? loVal : (1.0 - g) * loVal + g * get((int) (hi - 1), 0);
+		return (1.0 - g) * loVal + g * get((int) (hi - 1), 0);
 	}
 
 	private double pickWeightedValue(double quantile) {
 		// R quantile type 7 generalized to integer weights: treat as expanded sorted sequence of length sum_wt.
-		final double[] r = computeType7Rank(Math.round(sumWeightForQuantile()), quantile);
+		final double[] r = computeQuantileRank(Math.round(sumWeightForQuantile()), quantile);
 		final long lo = (long) r[0], hi = (long) r[1];
 		final double g = r[2];
 		final double loVal = valueAtWeightedRank(lo);
-		return (g == 0.0 || hi == lo) ? loVal : (1.0 - g) * loVal + g * valueAtWeightedRank(hi);
+		return (1.0 - g) * loVal + g * valueAtWeightedRank(hi);
 	}
 
 	private double valueAtWeightedRank(long rank) {

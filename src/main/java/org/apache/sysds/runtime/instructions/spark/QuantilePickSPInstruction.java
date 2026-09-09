@@ -146,7 +146,7 @@ public class QuantilePickSPInstruction extends BinarySPInstruction {
 
 	/**
 	 * Pick one R quantile type 7 value per requested probability. Used by VALUEPICK / MEDIAN. Two-column input is a
-	 * weighted sequence — treated as an expanded sorted sequence of length sum(weights) and picked with the same h/lo/
+	 * weighted sequence, treated as an expanded sorted sequence of length sum(weights) and picked with the same h/lo/
 	 * hi/g formula against cumulative weights.
 	 */
 	private static double[] pickQuantileValues(JavaPairRDD<MatrixIndexes, MatrixBlock> w, DataCharacteristics mc,
@@ -164,7 +164,7 @@ public class QuantilePickSPInstruction extends BinarySPInstruction {
 			final long[] qiKeys = new long[nk];
 			final double[] gs = new double[quantiles.length];
 			for(int i = 0; i < quantiles.length; i++) {
-				final double[] r = MatrixBlock.computeType7Rank(sumWt, quantiles[i]);
+				final double[] r = MatrixBlock.computeQuantileRank(sumWt, quantiles[i]);
 				qiKeys[2 * i] = (long) r[0];
 				qiKeys[2 * i + 1] = (long) r[1];
 				qdKeys[2 * i] = r[0];
@@ -182,11 +182,11 @@ public class QuantilePickSPInstruction extends BinarySPInstruction {
 		else {
 			final long N = mc.getRows();
 			for(int i = 0; i < quantiles.length; i++) {
-				final double[] r = MatrixBlock.computeType7Rank(N, quantiles[i]);
+				final double[] r = MatrixBlock.computeQuantileRank(N, quantiles[i]);
 				final long lo = (long) r[0], hi = (long) r[1];
 				final double g = r[2];
 				final double loVal = lookupKey(w, lo, blen);
-				values[i] = (g == 0.0 || hi == lo) ? loVal : (1.0 - g) * loVal + g * lookupKey(w, hi, blen);
+				values[i] = (1.0 - g) * loVal + g * lookupKey(w, hi, blen);
 			}
 		}
 		return values;

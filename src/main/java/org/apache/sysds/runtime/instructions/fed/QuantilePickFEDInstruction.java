@@ -300,7 +300,7 @@ public class QuantilePickFEDInstruction extends BinaryFEDInstruction {
 		final double[] gs = new double[quantiles.length];
 		final Set<Integer> rankSet = new TreeSet<>();
 		for(int i = 0; i < quantiles.length; i++) {
-			final double[] r = MatrixBlock.computeType7Rank(N, quantiles[i]);
+			final double[] r = MatrixBlock.computeQuantileRank(N, quantiles[i]);
 			los[i] = (int) r[0];
 			his[i] = (int) r[1];
 			gs[i] = r[2];
@@ -315,23 +315,18 @@ public class QuantilePickFEDInstruction extends BinaryFEDInstruction {
 
 		if(quantiles.length == 1) {
 			ec.setScalarOutput(output.getName(),
-				new DoubleObject(interpolateType7(los[0], his[0], gs[0], rankToValue)));
+				new DoubleObject((1.0 - gs[0]) * rankToValue.get(los[0]) + gs[0] * rankToValue.get(his[0])));
 		}
 		else {
 			MatrixBlock out = new MatrixBlock(quantiles.length, 1, false);
 			for(int i = 0; i < quantiles.length; i++)
-				out.set(i, 0, interpolateType7(los[i], his[i], gs[i], rankToValue));
+				out.set(i, 0, (1.0 - gs[i]) * rankToValue.get(los[i]) + gs[i] * rankToValue.get(his[i]));
 			ec.setMatrixOutput(output.getName(), out);
 		}
 	}
 
-	private static double interpolateType7(int lo, int hi, double g, Map<Integer, Double> rankToValue) {
-		final double loVal = rankToValue.get(lo);
-		return (g == 0.0 || hi == lo) ? loVal : (1.0 - g) * loVal + g * rankToValue.get(hi);
-	}
-
-	// IQM is a trimmed weighted mean, not an R type-7 pick. Uses raw ceil-based q25/q75 boundaries and the closed-form
-	// boundary correction — kept structurally identical to the pre-3953 IQM math so IQMTest stays a green guardrail.
+	// IQM is a trimmed weighted mean, not an R type-7 pick. Therefore, it uses raw ceil-based q25/q75 boundaries
+	// and the closed-form boundary correction.
 	private void computeIqm(ExecutionContext ec, MatrixObject in, FederationMap fedMap, long varID, int vectorLength,
 		double globalMin, double globalMax) {
 		final int q25Rank = (int) Math.ceil(0.25 * vectorLength);
@@ -398,7 +393,7 @@ public class QuantilePickFEDInstruction extends BinaryFEDInstruction {
 	}
 
 	// Look up the value at each requested (deduplicated, sorted) 1-based rank. Builds the coarse histogram once and
-	// refines per rank — the multi-rank pipeline the type-7 pair lookup rides on.
+	// refines per rank.
 	private Map<Integer, Double> pickMultipleRanks(MatrixObject in, int[] ranks, int vectorLength, long varID,
 		double globalMin, double globalMax) {
 		final Map<Integer, Double> result = new HashMap<>();
@@ -442,8 +437,8 @@ public class QuantilePickFEDInstruction extends BinaryFEDInstruction {
 						response.throwExceptionFromResponse();
 					MatrixBlock tmp = (MatrixBlock) response.getData()[0];
 					synchronized(resolved) {
-						resolved.binaryOperationsInPlace(InstructionUtils.parseBinaryOperator(Opcodes.PLUS.toString()),
-							tmp);
+						resolved.binaryOperationsInPlace(
+							InstructionUtils.parseBinaryOperator(Opcodes.PLUS.toString()), tmp);
 					}
 					return null;
 				}
@@ -459,9 +454,7 @@ public class QuantilePickFEDInstruction extends BinaryFEDInstruction {
 	}
 
 	// Refine a coarse-histogram bucket into a finer sub-histogram covering just that bucket's range, and recurse
-	// into it for the given target rank. Shared by computeIqm and pickMultipleRanks so the nextNumBuckets heuristic
-	// lives in one place. Returns either the final value (Double) or the bucket range (ImmutablePair) — same
-	// polymorphic shape as createHistogram, callers instanceof-check.
+	// into it for the given target rank. Returns either the final value (Double) or the bucket range.
 	private Object refineBucket(MatrixObject in, int vectorLength,
 		ImmutableTriple<Integer, Integer, ImmutablePair<Double, Double>> bucketWithIndex) {
 		final int nextNumBuckets = bucketWithIndex.middle < 100 ? bucketWithIndex.middle *
@@ -471,7 +464,7 @@ public class QuantilePickFEDInstruction extends BinaryFEDInstruction {
 	}
 
 	// Scan the coarse histogram once and record, for each target rank, the bucket range containing it plus the
-	// rank's offset within that bucket. Extracted from the multi-rank pipeline so IQM can reuse it verbatim.
+	// rank's offset within that bucket.
 	// Triple layout per rank i: left = rank offset within the bucket (1-based, i.e. how many entries into the
 	// bucket the target sits), middle = bucket frequency, right = (bucketMin, bucketMax) sub-range to recurse into.
 	private static ImmutableTriple<Integer, Integer, ImmutablePair<Double, Double>>[] locateInitialBuckets(
@@ -786,7 +779,7 @@ public class QuantilePickFEDInstruction extends BinaryFEDInstruction {
 								new QuantilePickFEDInstruction.ColIQM(data.getVarID()))).get();
 						break;
 					case MEDIAN:
-						// MEDIAN is VALUEPICK at p = 0.5 once the kernel handles R type 7 at both parities.
+						// MEDIAN is VALUEPICK at p = 0.5
 						response = data
 							.executeFederatedOperation(new FederatedRequest(FederatedRequest.RequestType.EXEC_UDF, -1,
 								new QuantilePickFEDInstruction.ValuePick(data.getVarID(), new DoubleObject(0.5))))

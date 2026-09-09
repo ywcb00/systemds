@@ -31,7 +31,7 @@ Y = X
 
 for (j in 1:ncol(X)) {
   col = X[, j]
-  # SYSTEMDS-3953: DML quantile default is now R type 7 (matching R's own default).
+  # DML quantile corresponds to R quantile type 7 (matching R's own default).
   med = quantile(col, probs=0.5, type=7, names=FALSE, na.rm=FALSE)
   q1  = quantile(col, probs=0.25, type=7, names=FALSE, na.rm=FALSE)
   q3  = quantile(col, probs=0.75, type=7, names=FALSE, na.rm=FALSE)
