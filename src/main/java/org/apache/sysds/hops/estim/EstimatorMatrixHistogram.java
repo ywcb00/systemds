@@ -347,10 +347,12 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 			return cNnz;
 		}
 		
-		public long getNonZeros() {
-			return getRows() < getCols() ?
-				IntStream.range(0, getRows()).mapToLong(i-> rNnz[i]).sum() :
-				IntStream.range(0, getCols()).mapToLong(i-> cNnz[i]).sum();
+		public int getNonZeros() {
+			return getRows() < getCols() ? IntStream.of(rNnz).sum() : IntStream.of(cNnz).sum();
+		}
+
+		public double getSparsity() {
+			return ((double)getNonZeros()) / (getRows() * getCols());
 		}
 		
 		public void setData(MatrixBlock mb) {
