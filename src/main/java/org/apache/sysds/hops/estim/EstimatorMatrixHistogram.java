@@ -22,6 +22,7 @@ package org.apache.sysds.hops.estim;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.runtime.data.DenseBlock;
 import org.apache.sysds.runtime.data.SparseBlock;
 import org.apache.sysds.runtime.matrix.data.LibMatrixAgg;
@@ -77,7 +78,7 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 			h2.setData(root.getRight().isLeaf() ? root.getRight().getData() : null);
 		MatrixHistogram outMap = MatrixHistogram
 			.deriveOutputHistogram(h1, h2, ret, root.getOp(), root.getMisc());
-		root.setSynopsis(outMap);
+		root.setSynopsis(outMap, EstimatorType.MNC);
 		return root.setDataCharacteristics(new MatrixCharacteristics(
 			outMap.getRows(), outMap.getCols(), outMap.getNonZeros()));
 	}
@@ -111,7 +112,7 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 			return null;
 		//ensure synopsis is properly cached and reused
 		if( node.isLeaf() && node.getSynopsis() == null )
-			node.setSynopsis(new MatrixHistogram(node.getData(), _useExtended));
+			node.setSynopsis(new MatrixHistogram(node.getData(), _useExtended), EstimatorType.MNC);
 		else if( !node.isLeaf() )
 			estim(node, false); //recursively obtain synopsis
 		return (MatrixHistogram) node.getSynopsis();

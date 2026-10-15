@@ -19,6 +19,7 @@
 
 package org.apache.sysds.hops.estim;
 
+import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.hops.estim.SparsityEstimator.OpCode;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -35,7 +36,7 @@ public class MMNode
 	private final MMNode _m2;
 	private final MatrixBlock _data;
 	private final DataCharacteristics _mc;
-	private Object _synops = null;
+	private SparsityEstimate _synops = null;
 	private final OpCode _op;
 	private final long[] _misc;
 	
@@ -128,12 +129,16 @@ public class MMNode
 		return _data;
 	}
 	
-	public void setSynopsis(Object obj) {
-		_synops = obj;
+	public void setSynopsis(Object obj, EstimatorType type) {
+		setSynopsis(new SparsityEstimate(obj, type));
+	}
+
+	public void setSynopsis(SparsityEstimate sparsityEstimate) {
+		_synops = sparsityEstimate;
 	}
 	
 	public Object getSynopsis() {
-		return _synops;
+		return _synops == null ? null : _synops.getEstimate();
 	}
 	
 	public OpCode getOp() {

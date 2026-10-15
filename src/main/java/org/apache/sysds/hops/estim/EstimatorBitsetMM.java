@@ -22,6 +22,7 @@ package org.apache.sysds.hops.estim;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.sysds.hops.HopsException;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.runtime.data.DenseBlock;
 import org.apache.sysds.runtime.data.SparseBlock;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -61,7 +62,7 @@ public class EstimatorBitsetMM extends SparsityEstimator
 		BitsetMatrix m2Map = getCachedSynopsis(root.getRight());
 		
 		BitsetMatrix outMap = estimInternal(m1Map, m2Map, root.getOp());
-		root.setSynopsis(outMap); // memorize boolean matrix
+		root.setSynopsis(outMap, EstimatorType.BITSET_MM); // memorize boolean matrix
 		return root.setDataCharacteristics(new MatrixCharacteristics(
 			outMap.getNumRows(), outMap.getNumColumns(), outMap.getNonZeros()));
 	}
@@ -99,7 +100,7 @@ public class EstimatorBitsetMM extends SparsityEstimator
 			return null;
 		//ensure synopsis is properly cached and reused
 		if( node.isLeaf() && node.getSynopsis() == null )
-			node.setSynopsis(createBitset(node.getData()));
+			node.setSynopsis(createBitset(node.getData()), EstimatorType.BITSET_MM);
 		else if( !node.isLeaf() )
 			estim(node); //recursively obtain synopsis
 		return (BitsetMatrix) node.getSynopsis();

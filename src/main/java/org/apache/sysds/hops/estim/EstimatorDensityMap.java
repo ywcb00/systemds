@@ -21,6 +21,7 @@ package org.apache.sysds.hops.estim;
 
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.runtime.data.DenseBlock;
 import org.apache.sysds.runtime.data.SparseBlock;
 import org.apache.sysds.runtime.matrix.data.LibMatrixReorg;
@@ -61,7 +62,7 @@ public class EstimatorDensityMap extends SparsityEstimator
 		
 		//estimate output density map and sparsity
 		DensityMap outMap = estimIntern(m1Map, m2Map, root.getOp());
-		root.setSynopsis(outMap); //memoize density map
+		root.setSynopsis(outMap, EstimatorType.DM); //memoize density map
 		return root.setDataCharacteristics(new MatrixCharacteristics(
 			outMap.getNumRowsOrig(), outMap.getNumColumnsOrig(), outMap.getNonZeros()));
 	}
@@ -94,7 +95,7 @@ public class EstimatorDensityMap extends SparsityEstimator
 			return null;
 		//ensure synopsis is properly cached and reused
 		if( node.isLeaf() && node.getSynopsis() == null )
-			node.setSynopsis(new DensityMap(node.getData(), _b));
+			node.setSynopsis(new DensityMap(node.getData(), _b), EstimatorType.DM);
 		else if( !node.isLeaf() )
 			estim(node); //recursively obtain synopsis
 		return (DensityMap) node.getSynopsis();

@@ -22,6 +22,7 @@ package org.apache.sysds.hops.estim;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.runtime.data.SparseRow;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
@@ -166,7 +167,7 @@ public class EstimatorRowWise extends SparsityEstimator {
 					" is not supported yet.");
 			}
 		}
-		node.setSynopsis(rsOut);
+		node.setSynopsis(rsOut, EstimatorType.RS);
 		node.setDataCharacteristics(deriveOutputCharacteristics(node, DoubleStream.of(rsOut).average().orElse(0)));
 		return rsOut;
 	}

@@ -20,13 +20,14 @@
 package org.apache.sysds.hops.estim;
 
 import java.util.stream.DoubleStream;
+import java.util.stream.IntStream;
 
 import org.apache.hadoop.shaded.org.apache.commons.lang3.NotImplementedException;
 import org.apache.sysds.hops.estim.EstimationUtils.EstimatorType;
 import org.apache.sysds.hops.estim.EstimatorMatrixHistogram.MatrixHistogram;
 import org.apache.sysds.runtime.DMLRuntimeException;
 
-// class to represent and store any type of sparsity estimate
+// class representing and store any type of sparsity estimate
 public class SparsityEstimate {
     Object _estimate;
     EstimatorType _type;
@@ -34,6 +35,10 @@ public class SparsityEstimate {
     public SparsityEstimate(Object estimate, EstimatorType type) {
         _estimate = estimate;
         _type = type;
+    }
+
+    public Object getEstimate() {
+        return _estimate;
     }
 
     public EstimatorType getType() {
@@ -53,10 +58,11 @@ public class SparsityEstimate {
         convertible |= from == to;
         switch (to) {
             case BASIC_AVG:
+                convertible |= from == EstimatorType.RS;
+            case RS:
                 convertible |= from == EstimatorType.MNC;
                 convertible |= from == EstimatorType.MNC_LIM;
                 convertible |= from == EstimatorType.MNC_EXT;
-                convertible |= from == EstimatorType.RS;
                 break;
             default:
                 throw new NotImplementedException();
@@ -68,12 +74,27 @@ public class SparsityEstimate {
         switch (_type) {
             case BASIC_AVG:
                 return this;
-            case MNC, MNC_LIM, MNC_EXT:
-                return new SparsityEstimate(Double.valueOf(
-                    ((MatrixHistogram)_estimate).getSparsity()), EstimatorType.BASIC_AVG);
             case RS:
                 return new SparsityEstimate(Double.valueOf(
                     DoubleStream.of((double[])_estimate).average().getAsDouble()), EstimatorType.BASIC_AVG);
+            case MNC, MNC_LIM, MNC_EXT:
+                return new SparsityEstimate(Double.valueOf(
+                    ((MatrixHistogram)_estimate).getSparsity()), EstimatorType.BASIC_AVG);
+            default:
+                throw new DMLRuntimeException("Cannot convert sparsity estimate from type " +
+                    _type.name() + " to type " + EstimatorType.BASIC_AVG.name());
+        }
+    }
+
+    public SparsityEstimate convertToRowwiseSparsity() {
+        switch (_type) {
+            case RS:
+                return this;
+            case MNC, MNC_LIM, MNC_EXT:
+                return new SparsityEstimate(
+                    IntStream.of(((MatrixHistogram)_estimate).getRowCounts()).mapToDouble(
+                        nnz -> ((double)nnz) / ((MatrixHistogram)_estimate).getCols()).toArray(),
+                    EstimatorType.RS);
             default:
                 throw new DMLRuntimeException("Cannot convert sparsity estimate from type " +
                     _type.name() + " to type " + EstimatorType.BASIC_AVG.name());
