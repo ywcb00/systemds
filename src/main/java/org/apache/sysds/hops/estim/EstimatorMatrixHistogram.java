@@ -62,14 +62,16 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 	
 	public DataCharacteristics estim(MMNode root, boolean topLevel) {
 		//NOTE: not estimateInputs due to handling of topLevel
-		MatrixHistogram h1 = getCachedSynopsis(root.getLeft());
-		MatrixHistogram h2 = getCachedSynopsis(root.getRight());
-		
+		MMNode leftNode = root.getLeft();
+		MMNode rightNode = root.getRight();
+		MatrixHistogram h1 = getCachedSynopsis(leftNode);
+		MatrixHistogram h2 = getCachedSynopsis(rightNode);
+
 		//estimate output sparsity based on input histograms
 		double ret = estimIntern(h1, h2, root.getOp(), root.getMisc());
 		if( topLevel ) { //fast-path final result
 			return MatrixHistogram.deriveOutputCharacteristics(
-				h1, h2, ret, root.getOp(), root.getMisc());
+				leftNode, rightNode, ret, root.getOp(), root.getMisc());
 		}
 		
 		//sketch propagation for intermediates other than final result
@@ -78,8 +80,8 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 		MatrixHistogram outMap = MatrixHistogram
 			.deriveOutputHistogram(h1, h2, ret, root.getOp(), root.getMisc());
 		root.setSynopsis(outMap);
-		return root.setDataCharacteristics(new MatrixCharacteristics(
-			outMap.getRows(), outMap.getCols(), outMap.getNonZeros()));
+		return MatrixHistogram.deriveOutputCharacteristics(
+			leftNode, rightNode, ret, root.getOp(), root.getMisc());
 	}
 	
 	@Override 
@@ -110,14 +112,22 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 		if( node == null )
 			return null;
 		//ensure synopsis is properly cached and reused
-		if( node.isLeaf() && node.getSynopsis() == null )
+		if(node.isLeaf() && node.getSynopsis() == null) {
+			MatrixBlock data = node.getData();
+			if(data == null)
+				return null;
 			node.setSynopsis(new MatrixHistogram(node.getData(), _useExtended));
-		else if( !node.isLeaf() )
+		}
+		else if(!node.isLeaf()) {
 			estim(node, false); //recursively obtain synopsis
+		}
 		return (MatrixHistogram) node.getSynopsis();
 	}
 	
 	public double estimIntern(MatrixHistogram h1, MatrixHistogram h2, OpCode op, long[] misc) {
+		if(h1 == null || h2 == null)
+			return -1;
+
 		double msize = (double)h1.getRows()*h1.getCols();
 		switch (op) {
 			case MM:
@@ -358,6 +368,8 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 		}
 		
 		public static MatrixHistogram deriveOutputHistogram(MatrixHistogram h1, MatrixHistogram h2, double spOut, OpCode op, long[] misc) {
+			if(h1 == null || h2 == null)
+				return null;
 			switch(op) {
 				case MM:      return deriveMMHistogram(h1, h2, spOut);
 				case MULT:    return deriveMultHistogram(h1, h2);
@@ -374,29 +386,32 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 			}
 		}
 		
-		public static DataCharacteristics deriveOutputCharacteristics(MatrixHistogram h1, MatrixHistogram h2, double spOut, OpCode op, long[] misc) {
+		public static DataCharacteristics deriveOutputCharacteristics(MMNode leftNode, MMNode rightNode, double spOut, OpCode op, long[] misc) {
+			if(leftNode == null || rightNode == null)
+				return null;
 			switch(op) {
 				case MM:
-					return new MatrixCharacteristics(h1.getRows(), h2.getCols(),
-						OptimizerUtils.getNnz(h1.getRows(), h2.getCols(), spOut));
+					return new MatrixCharacteristics(leftNode.getRows(), rightNode.getCols(),
+						OptimizerUtils.getNnz(leftNode.getRows(), rightNode.getCols(), spOut));
 				case MULT:
 				case PLUS:
 				case NEQZERO:
 				case EQZERO:
-					return new MatrixCharacteristics(h1.getRows(), h1.getCols(),
-						OptimizerUtils.getNnz(h1.getRows(), h1.getCols(), spOut));
+					return new MatrixCharacteristics(leftNode.getRows(), leftNode.getCols(),
+						OptimizerUtils.getNnz(leftNode.getRows(), leftNode.getCols(), spOut));
 				case RBIND:
-					return new MatrixCharacteristics(h1.getRows()+h2.getRows(), h1.getCols(),
-						OptimizerUtils.getNnz(h1.getRows()+h2.getRows(), h1.getCols(), spOut));
+					return new MatrixCharacteristics(leftNode.getRows()+rightNode.getRows(), leftNode.getCols(),
+						OptimizerUtils.getNnz(leftNode.getRows()+rightNode.getRows(), leftNode.getCols(), spOut));
 				case CBIND:
-					return new MatrixCharacteristics(h1.getRows(), h1.getCols()+h2.getCols(),
-						OptimizerUtils.getNnz(h1.getRows(), h1.getCols()+h2.getCols(), spOut));
+					return new MatrixCharacteristics(leftNode.getRows(), leftNode.getCols()+rightNode.getCols(),
+						OptimizerUtils.getNnz(leftNode.getRows(), leftNode.getCols()+rightNode.getCols(), spOut));
 				case DIAG:
-					int ncol = h1.getCols()==1 ? h1.getRows() : 1;
-					return new MatrixCharacteristics(h1.getRows(), ncol,
-						OptimizerUtils.getNnz(h1.getRows(), ncol, spOut));
+					int ncol = leftNode.getCols()==1 ? leftNode.getRows() : 1;
+					return new MatrixCharacteristics(leftNode.getRows(), ncol,
+						OptimizerUtils.getNnz(leftNode.getRows(), ncol, spOut));
 				case TRANS:
-					return new MatrixCharacteristics(h1.getCols(), h1.getRows(), h1.getNonZeros());
+					return new MatrixCharacteristics(leftNode.getCols(), leftNode.getRows(),
+						OptimizerUtils.getNnz(leftNode.getRows(), leftNode.getCols(), spOut));
 				case RESHAPE:
 					return new MatrixCharacteristics((int)misc[0], (int)misc[1],
 						OptimizerUtils.getNnz((int)misc[0], (int)misc[1], spOut));

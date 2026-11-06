@@ -157,6 +157,7 @@ public class RewriteSplitDagSparsityRecompileTest extends AutomatedTestBase {
 			try {
 				DMLConfig dmlConfig = new DMLConfig(getCurConfigFile().getPath());
 				dmlConfig.setTextValue(DMLConfig.SPARSITY_RECOMPILE, "true");
+				dmlConfig.setTextValue(DMLConfig.SPARSITY_ESTIMATOR, "MNC");
 				overwriteCurrentConfig(dmlConfig);
 			}
 			catch(FileNotFoundException fnfe) {
