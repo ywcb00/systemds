@@ -20,6 +20,7 @@
 package org.apache.sysds.hops.rewrite;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
@@ -31,6 +32,7 @@ import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.parser.DataIdentifier;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.VariableSet;
+import org.apache.sysds.runtime.DMLRuntimeException;
 
 /**
  * Rule: Split Hop DAG after reads with unknown nnz. This is important to create recompile
@@ -179,6 +181,8 @@ public class RewriteSplitDagSparsityRecompile extends SplitStatementBlockRewrite
 	private void rCollectNnzComputationCandidates(Hop hop, ArrayList<Hop> cand, Hop parentHop) {
 		if(hop.isVisited())
 			return;
+		if(hop.getDataCharacteristics().getCNnz() != null)
+			throw new DMLRuntimeException("RewriteSplitDagSparsityRecompile.java:92 - CNnz is not null but " + Arrays.toString(hop.getDataCharacteristics().getCNnz()));
 		// has already been split off
 		boolean noSplitRequired = HopRewriteUtils.hasOnlyWriteParents(hop, true, false);
 

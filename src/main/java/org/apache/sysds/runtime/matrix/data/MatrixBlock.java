@@ -160,7 +160,10 @@ public class MatrixBlock extends MatrixValue implements CacheBlock<MatrixBlock>,
 	
 	//sparse-block-specific attributes (allocation only)
 	protected int estimatedNNzsPerRow = -1;
-	
+
+	public int rNnz[];
+	public int cNnz[];
+
 	////////
 	// Matrix Constructors
 	//
@@ -595,7 +598,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock<MatrixBlock>,
 	
 	@Override
 	public final DataCharacteristics getDataCharacteristics() {
-		return new MatrixCharacteristics(rlen, clen, -1, nonZeros);
+		return new MatrixCharacteristics(rlen, clen, -1, nonZeros, rNnz, cNnz);
 	}
 
 	/**

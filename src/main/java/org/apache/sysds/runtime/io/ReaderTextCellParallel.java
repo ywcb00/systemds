@@ -102,9 +102,10 @@ public class ReaderTextCellParallel extends ReaderTextCell
 			//count nnz per row for sparse preallocation
 			if( dest.isInSparseFormat() ) {
 				int[] rNnz = new int[(int)rlen];
+				int[] cNnz = new int[(int)clen];
 				boolean isSymmetric = _isMMFile && _mmProps.isSymmetric();
 				List<CountNnzTask> tasks = Arrays.stream(splits)
-					.map(s ->new CountNnzTask(s, informat, job, rNnz, isSymmetric))
+					.map(s ->new CountNnzTask(s, informat, job, rNnz, cNnz, isSymmetric))
 					.collect(Collectors.toList());
 				List<Future<Void>> rt1 = pool.invokeAll(tasks);
 				for( Future<Void> task : rt1 )
@@ -116,6 +117,9 @@ public class ReaderTextCellParallel extends ReaderTextCell
 					.collect(Collectors.toList());
 				for( Future<?> task : rt1b )
 					task.get();
+				dest.rNnz = rNnz;
+				dest.cNnz = cNnz;
+				System.out.println("ReaderTextCellParallel.java:122 - rNnz is " + Arrays.toString(rNnz) + " and cNnz is " + Arrays.toString(cNnz));
 			}
 			
 			//create and execute read tasks for all splits
@@ -262,13 +266,15 @@ public class ReaderTextCellParallel extends ReaderTextCell
 		private final TextInputFormat _informat;
 		private final JobConf _job;
 		private final int[] _rNnz;
+		private final int[] _cNnz;
 		private final boolean _isSymmetric;
 		
-		public CountNnzTask( InputSplit split, TextInputFormat informat, JobConf job, int[] rNnz, boolean isSymmetric ) {
+		public CountNnzTask( InputSplit split, TextInputFormat informat, JobConf job, int[] rNnz, int[] cNnz, boolean isSymmetric ) {
 			_split = split;
 			_informat = informat;
 			_job = job;
 			_rNnz = rNnz;
+			_cNnz = cNnz;
 			_isSymmetric = isSymmetric;
 		}
 
@@ -292,7 +298,7 @@ public class ReaderTextCellParallel extends ReaderTextCell
 						break;
 					}
 				}
-				
+
 				//counting without locking as conflicts unlikely
 				while( reader.next(key, value) ) {
 					countCell(st, value.toString());
@@ -309,10 +315,12 @@ public class ReaderTextCellParallel extends ReaderTextCell
 			int rix = (int)st.nextLong()-1;
 			if(rix >= 0){
 				_rNnz[rix] ++;
-				if( _isSymmetric ) {
-					int cix = (int)st.nextLong()-1;
-					if(rix != cix)
-						_rNnz[cix] ++;
+				int cix = (int)st.nextLong()-1;
+				if(cix >= 0)
+					_cNnz[cix]++;
+				if(_isSymmetric && rix != cix) {
+					_rNnz[cix]++;
+					_cNnz[rix]++;
 				}
 			}
 		}

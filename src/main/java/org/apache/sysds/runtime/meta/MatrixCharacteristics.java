@@ -57,7 +57,11 @@ public class MatrixCharacteristics extends DataCharacteristics
 	public MatrixCharacteristics(long nr, long nc, int blen, long nnz) {
 		set(nr, nc, blen, nnz);
 	}
-	
+
+	public MatrixCharacteristics(long nr, long nc, int blen, long nnz, int[] rNnz, int[] cNnz) {
+		set(nr, nc, blen, nnz, rNnz, cNnz);
+	}
+
 	public MatrixCharacteristics(DataCharacteristics that) {
 		set(that);
 	}
@@ -78,10 +82,21 @@ public class MatrixCharacteristics extends DataCharacteristics
 		return this;
 	}
 
+	public DataCharacteristics set(long nr, long nc, int blen, long nnz, int[] rNnz, int[] cNnz) {
+		set(nr, nc, blen);
+		nonZero = nnz;
+		ubNnz = false;
+		this.rNnz = rNnz;
+		this.cNnz = cNnz;
+		return this;
+	}
+
 	@Override
 	public DataCharacteristics set(DataCharacteristics that) {
 		set(that.getRows(), that.getCols(), that.getBlocksize(), that.getNonZeros());
 		ubNnz = (that instanceof MatrixCharacteristics && ((MatrixCharacteristics)that).ubNnz);
+		this.rNnz = that.getRNnz();
+		this.cNnz = that.getCNnz();
 		return this;
 	}
 

@@ -41,6 +41,8 @@ import org.apache.sysds.lops.Sql;
 import org.apache.sysds.lops.Tee;
 import org.apache.sysds.parser.DataExpression;
 import static org.apache.sysds.parser.DataExpression.FED_RANGES;
+
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 import org.apache.sysds.runtime.util.LocalFileUtils;
@@ -60,6 +62,13 @@ public class DataOp extends Hop {
 	private boolean _hasOnlyRDD = false;
 	
 	private boolean _recompileRead = true;
+
+	@Override
+	public void setNnz(long nnz) {
+		super.setNnz(nnz);
+		if(_op == OpOpData.TRANSIENTREAD && nnz == 3)
+			System.out.println("DataOp.java:70 - name is " + getName());
+	}
 
 	/**
 	 * List of "named" input parameters. They are maintained as a hashmap:

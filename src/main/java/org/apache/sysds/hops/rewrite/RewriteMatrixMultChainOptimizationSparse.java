@@ -136,6 +136,7 @@ public class RewriteMatrixMultChainOptimizationSparse extends RewriteMatrixMultC
 			inputMetaAvail &= (currentHop.getNnz() != -1);
 			if(inputMetaAvail) {
 				sketchArray[counter] = new MMNode(currentHop.getDataCharacteristics());
+				System.out.println("RewriteMatrixMultChainOptimizationSparse.java:139 - data characteristics for hop " + currentHop.toString() + " is " + currentHop.getDataCharacteristics().getCNnz() + " but nnz is " + currentHop.getNnz());
 			}
 			else
 				break;

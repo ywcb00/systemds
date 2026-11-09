@@ -26,7 +26,10 @@ public abstract class DataCharacteristics implements Serializable {
 
 	protected int _blocksize;                 // squared block size
 	protected boolean _noEmptyBlocks = false; // does not materialize empty blocks
-	
+
+	public int[] rNnz = null;
+	public int[] cNnz = null;
+
 	public abstract DataCharacteristics set(long nr, long nc, int blen);
 
 	public abstract DataCharacteristics set(long nr, long nc, int blen, long nnz);
@@ -103,6 +106,15 @@ public abstract class DataCharacteristics implements Serializable {
 	public abstract long getNonZerosBound();
 
 	public abstract double getSparsity();
+
+
+	public int[] getRNnz() {
+		return this.rNnz;
+	}
+
+	public int[] getCNnz() {
+		return this.cNnz;
+	}
 
 	public abstract boolean dimsKnown();
 
