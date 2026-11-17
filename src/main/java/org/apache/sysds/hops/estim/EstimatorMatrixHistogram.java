@@ -22,7 +22,6 @@ package org.apache.sysds.hops.estim;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.sysds.hops.OptimizerUtils;
-import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.data.DenseBlock;
 import org.apache.sysds.runtime.data.SparseBlock;
 import org.apache.sysds.runtime.matrix.data.LibMatrixAgg;
@@ -118,10 +117,12 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 		if( node == null )
 			return null;
 		//ensure synopsis is properly cached and reused
-		if( node.isLeaf() && node.getSynopsis() == null )
+		if(node.isLeaf() && node.getSynopsis() == null) {
 			node.setSynopsis(new MatrixHistogram(node.getData(), _useExtended));
-		else if( !node.isLeaf() )
-			estim(node, false); //recursively obtain synopsis
+		}
+		else if(!node.isLeaf()) {
+			estim(node, false); // recursively obtain synopsis
+		}
 		return (MatrixHistogram) node.getSynopsis();
 	}
 

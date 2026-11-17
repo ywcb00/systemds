@@ -22,6 +22,7 @@ package org.apache.sysds.hops.rewrite;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.logging.Log;
@@ -286,6 +287,13 @@ public class SparsityOptimizer {
 		}
 	}
 
+	private boolean checkSparsityPotential(MMNode sketchArray[]) {
+		double roughEstimate = Stream.of(sketchArray).mapToDouble(
+			node -> node.getDataCharacteristics().getSparsity())
+			.reduce(1, (a, b) -> a * b);
+		return roughEstimate < 0.3;
+	}
+
 	// Optimize the matrix multiplication chain by rewriting it
 	// This method can modify the mm chain completely, even re-creating it from scratch is allowed.
 	// NOTE: This method should return the new mm hop when re-creating it from scratch.
@@ -293,9 +301,9 @@ public class SparsityOptimizer {
 		// Step 2: construct dims array and input matrices
 		double[] dimsArray = new double[mmChain.size() + 1];
 		boolean dimsKnown = getDimsArray(mmHop, mmChain, dimsArray );
-		MMNode[] sketchArray = new MMNode[mmChain.size() + 1];
+		MMNode[] sketchArray = new MMNode[mmChain.size()];
 		boolean inputMetaAvail = getInputMatrixCharacteristics(mmChain, sketchArray, ec);
-		if(dimsKnown && inputMetaAvail) {
+		if(dimsKnown && inputMetaAvail && checkSparsityPotential(sketchArray)) {
 			// Step 3: clear the links among Hops within the identified chain
 			clearLinksWithinChain(mmHop, mmOperators);
 
@@ -317,14 +325,14 @@ public class SparsityOptimizer {
 			Hop currentHop = chain.get(counter);
 			inputMetaAvail &= currentHop.isMatrix();
 			inputMetaAvail &= !currentHop.isFederated();
-			// inputMetaAvail &= (currentHop.getNnz() != -1);
 			inputMetaAvail &= ec.containsVariable(currentHop.getName());
 			if(inputMetaAvail) {
 				MatrixObject mo = ec.getMatrixObject(currentHop.getName());
 				sketchArray[counter] =_estim.getInputMMNode(mo.acquireReadAndRelease());
 			}
-			else
+			else {
 				break;
+			}
 		}
 
 		return inputMetaAvail;
@@ -337,7 +345,7 @@ public class SparsityOptimizer {
 	 * Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, Clifford Stein
 	 * Introduction to Algorithms, Third Edition, MIT Press, page 395.
 	 */
-	private static int[][] mmChainDPSparse(double[] dimArray, MMNode[] sketchArray, int size) {
+	private int[][] mmChainDPSparse(double[] dimArray, MMNode[] sketchArray, int size) {
 		double[][] dpMatrix = new double[size][size]; //min cost table
 		MMNode[][] dpMatrixS = new MMNode[size][size]; //min sketch table
 		int[][] split = new int[size][size]; //min cost index table
@@ -350,8 +358,6 @@ public class SparsityOptimizer {
 		}
 
 		//compute cost-optimal chains for increasing chain sizes
-		SparsityEstimator estim = EstimatorType.valueOf(ConfigurationManager.getDMLConfig()
-			.getTextValue(DMLConfig.SPARSITY_ESTIMATOR)).getEstimator();
 		for(int l = 2; l <= size; l++) { // chain length
 			for(int i = 0; i < size - l + 1; i++) {
 				int j = i + l - 1;
@@ -361,7 +367,7 @@ public class SparsityOptimizer {
 				{
 					//construct estimation nodes (w/ lazy propagation and memoization)
 					MMNode tmp = new MMNode(dpMatrixS[i][k], dpMatrixS[k+1][j], OpCode.MM);
-					estim.estim(tmp);
+					_estim.estim(tmp);
 
 					// recursive cost computation
 					double cost = dpMatrix[i][k] + dpMatrix[k + 1][j] +
