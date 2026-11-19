@@ -291,6 +291,7 @@ public class SparsityOptimizer {
 		double roughEstimate = Stream.of(sketchArray).mapToDouble(
 			node -> node.getDataCharacteristics().getSparsity())
 			.reduce(1, (a, b) -> a * b);
+		LOG.trace("Rough sparsitty estimate of MM Chain result is " + roughEstimate);
 		return roughEstimate < 0.3;
 	}
 

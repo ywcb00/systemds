@@ -165,7 +165,6 @@ public class SparsityOptimizerTest extends AutomatedTestBase {
 			// check original log output
 			String log_original_string = String.join(DELIMITER,
 				log_original.stream().map(l -> l.getMessage().toString()).toArray(String[]::new));
-			System.out.println(log_original_string);
 			Assert.assertTrue(log_original_string.contains("RewriteSplitDagSparsityRecompile: Split DAG into"));
 			Assert.assertTrue(log_original_string.contains("SparsityOptimizer: Identified and optimized MM Chain:"));
 			// check reference log output
